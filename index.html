@@ -1,0 +1,1128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Veeqo → Nav: Orders Exporter</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --line:#2a2f3a;
+    --text:#e6e8ef; --muted:#9aa3b2; --accent:#5b8cff; --accent2:#3ad29f;
+    --warn:#f5a524; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:12px}
+  header h1{margin:0;font-size:18px;letter-spacing:.2px}
+  header .sub{color:var(--muted);font-size:12px}
+  main{display:block;min-height:calc(100vh - 53px)}
+  aside{padding:16px;background:var(--panel);overflow:auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:start}
+  aside fieldset{margin:0}
+  section{padding:16px;overflow:auto}
+  .tabs{display:flex;gap:4px;padding:8px 16px 0;border-bottom:1px solid var(--line);background:var(--panel)}
+  .tab-btn{background:transparent;border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;color:var(--muted);font-weight:600;padding:8px 16px;width:auto}
+  .tab-btn:hover{color:var(--text);background:var(--panel2)}
+  .tab-btn.active{background:var(--bg);color:var(--text);border-color:var(--line)}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .stat-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 18px;min-width:170px}
+  .stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+  .stat-value{font-size:28px;font-weight:700;margin-top:2px;color:var(--accent2)}
+  fieldset{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 14px}
+  legend{padding:0 6px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  label{display:block;margin:8px 0 4px;color:var(--muted);font-size:12px}
+  input,select,button,textarea{font:inherit;color:inherit;background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:8px 10px;width:100%}
+  input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+  .row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  button{cursor:pointer;background:var(--accent);border-color:transparent;color:white;font-weight:600}
+  button.secondary{background:var(--panel2);color:var(--text)}
+  button.ok{background:var(--accent2);color:#08110d}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .stack>*+*{margin-top:8px}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .log{background:#0a0c10;border:1px solid var(--line);border-radius:6px;padding:8px;height:140px;overflow:auto;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
+  table{border-collapse:collapse;width:100%;font-size:12px}
+  th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+  th{background:var(--panel);position:sticky;top:0;z-index:1;color:var(--muted);font-weight:600}
+  tr:hover td{background:rgba(91,140,255,.06)}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .grow{flex:1}
+  .muted{color:var(--muted)}
+  .badge-ok{color:var(--accent2)}
+  .badge-warn{color:var(--warn)}
+  .badge-err{color:var(--err)}
+  details{border:1px dashed var(--line);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+  summary{cursor:pointer;color:var(--muted)}
+  code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .hint{font-size:12px;color:var(--muted);margin-top:6px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Veeqo → Nav</h1>
+  <span class="sub">Fetch orders · merge with UPC / local SKU mapping · export</span>
+</header>
+<div class="tabs" role="tablist">
+  <button class="tab-btn active" data-tab="setup" role="tab">Setup</button>
+  <button class="tab-btn" data-tab="orders" role="tab">Orders</button>
+</div>
+<main>
+  <div class="tab-panel active" id="tab-setup">
+  <aside>
+    <fieldset>
+      <legend>1 · Veeqo connection</legend>
+      <label>API key</label>
+      <input id="apiKey" type="password" placeholder="Vqt/..." autocomplete="off"/>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
+        <input id="remember" type="checkbox" style="width:auto"/> Remember key in this browser
+      </label>
+      <label>Base URL</label>
+      <select id="baseUrl">
+        <option value="https://api.veeqo.com">https://api.veeqo.com (direct)</option>
+        <option value="http://localhost:8787">http://localhost:8787 (local proxy)</option>
+      </select>
+      <div class="hint">If direct calls fail with CORS, run the included <code>proxy.js</code> and switch to the proxy.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>2 · Filters</legend>
+      <div class="row">
+        <div><label>Created from</label><input id="fromDate" type="date"/></div>
+        <div><label>Created to</label><input id="toDate" type="date"/></div>
+      </div>
+      <label>Status</label>
+      <select id="status">
+        <option value="">(any)</option>
+        <option value="awaiting_fulfillment" selected>Ready to ship (awaiting_fulfillment)</option>
+        <option value="awaiting_amazon_fulfillment">Awaiting Amazon fulfillment</option>
+        <option value="awaiting_payment">Awaiting payment</option>
+        <option value="awaiting_stock">Awaiting stock</option>
+        <option value="awaiting_amazon_stock">Awaiting Amazon stock</option>
+        <option value="shipped">Shipped</option>
+        <option value="cancelled">Cancelled</option>
+        <option value="refunded">Refunded</option>
+        <option value="on_hold">On hold</option>
+        <option value="parked">Parked</option>
+      </select>
+      <label style="display:flex;justify-content:space-between;align-items:center">
+        <span>Stores (multi-select)</span>
+        <button id="loadStoresBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Load stores</button>
+      </label>
+      <select id="stores" multiple size="6"></select>
+      <div class="hint">Hold Ctrl/Cmd to select multiple. Empty = all stores.</div>
+      <div class="row">
+        <div><label>Page size</label><input id="pageSize" type="number" value="50" min="1" max="100"/></div>
+        <div><label>Max pages</label><input id="maxPages" type="number" value="20" min="1" max="200"/></div>
+      </div>
+      <label>Search query (optional)</label>
+      <input id="query" placeholder="customer name, order #, etc."/>
+      <div class="hint" style="margin-top:8px">The <b>Fetch orders</b> button lives in the <b>Orders</b> tab. Orders auto-fetch on tab open and every 5 minutes.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>3 · Items file (Excel)</legend>
+      <input id="mapFile" type="file" accept=".xlsx,.xls,.csv"/>
+      <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+        <span class="pill" id="mapStatus">No mapping saved</span>
+        <button id="clearMapBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear saved</button>
+      </div>
+      <label>Sheet</label>
+      <select id="mapSheet"></select>
+      <div class="row3">
+        <div><label>Item # column</label><select id="colItem"></select></div>
+        <div><label>UPC column</label><select id="colUpc"></select></div>
+        <div><label>Local SKU column</label><select id="colSku"></select></div>
+      </div>
+      <details>
+        <summary>Item-number cleaning</summary>
+        <label style="display:flex;gap:6px;align-items:center"><input id="cleanTrim" type="checkbox" checked style="width:auto"/> Trim whitespace</label>
+        <label style="display:flex;gap:6px;align-items:center"><input id="cleanUpper" type="checkbox" checked style="width:auto"/> Uppercase</label>
+        <label style="display:flex;gap:6px;align-items:center"><input id="cleanStripNonAlnum" type="checkbox" style="width:auto"/> Remove non-alphanumeric</label>
+        <label style="display:flex;gap:6px;align-items:center"><input id="cleanLeadingZeros" type="checkbox" style="width:auto"/> Drop leading zeros</label>
+        <label>Strip prefix (regex, optional)</label>
+        <input id="cleanPrefix" placeholder="^DE-"/>
+        <label>Strip suffix (regex, optional)</label>
+        <input id="cleanSuffix" placeholder="-V\d+$"/>
+      </details>
+    </fieldset>
+
+    <fieldset>
+      <legend>4 · Bin / Stock file (Excel)</legend>
+      <input id="binFile" type="file" accept=".xlsx,.xls,.csv"/>
+      <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+        <span class="pill" id="binStatus">No bin file saved</span>
+        <button id="clearBinBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear saved</button>
+      </div>
+      <label>Sheet</label>
+      <select id="binSheet"></select>
+      <div class="row">
+        <div><label>SKU column (Item No)</label><select id="binColSku"></select></div>
+        <div><label>Bin Code column</label><select id="binColLoc"></select></div>
+      </div>
+      <div class="row">
+        <div><label>Quantity column</label><select id="binColQty"></select></div>
+        <div><label>Location Code column</label><select id="binColCode"></select></div>
+      </div>
+      <label>Allowed zones (filter) <span id="binZonesCount" style="color:var(--muted);font-weight:normal">(0)</span></label>
+      <div style="display:flex;gap:6px;margin-bottom:4px">
+        <button id="binZonesAll" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Select all</button>
+        <button id="binZonesNone" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear</button>
+        <button id="binZonesDefault" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Defaults (A/B/C/GOLDEN)</button>
+      </div>
+      <select id="binZones" multiple size="5" style="height:auto"></select>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Informational only — the per-Location-Code totals shown in the Orders tab are a pure pivot of <b>SKU × Location Code</b> from the bin file (every row). The zone list above just shows what bin code prefixes exist. Selection is saved.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>5 · Build & export</legend>
+      <button id="buildBtn" class="ok">Build merged list</button>
+      <div class="row" style="margin-top:8px">
+        <button id="dlXlsx" class="secondary" disabled>Download .xlsx</button>
+        <button id="dlCsv" class="secondary" disabled>Download .csv</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Log</legend>
+      <div class="log" id="log"></div>
+    </fieldset>
+  </aside>
+  </div>
+
+  <div class="tab-panel" id="tab-orders">
+  <section>
+    <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:6px">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
+        <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Nav (.xlsx)</button>
+        <span class="pill" id="lastFetched" title="Time of the last successful fetch">Never fetched</span>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
+          <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
+        </label>
+        <span class="grow"></span>
+        <input id="filterText" placeholder="Filter Order / Customer / Ecom Item / SKU / UPC..." style="max-width:300px" title="Type any text — rows where Order, Customer, Ecom Item, SKU, or UPC contain the text will be shown."/>
+        <button id="clearFilterBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400">Clear filter</button>
+      </div>
+      <div style="display:flex;gap:12px;align-items:stretch;flex-wrap:wrap;margin-top:4px">
+        <div class="stat-box">
+          <div class="stat-label">Total Orders</div>
+          <div class="stat-value" id="statOrders">0</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-label">Total Items Requested</div>
+          <div class="stat-value" id="statItems">0</div>
+        </div>
+      </div>
+      <div style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px;margin-top:6px">Summary</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="pill" id="ordersCount" title="Orders fetched from Veeqo">0 orders</span>
+        <span class="pill" id="linesCount" title="Line items after Build merged list (one per SKU)">0 lines</span>
+        <span class="pill" id="matchedCount" title="Line items found in your mapping file">0 matched</span>
+        <span class="pill" id="unmatchedCount" title="Line items NOT found in your mapping file">0 unmatched</span>
+      </div>
+      <div style="color:var(--muted);font-size:11px">
+        <b>Orders</b> = pulled from Veeqo · <b>Lines</b> = line items (after Build) · <b>Matched / Unmatched</b> = found in mapping file
+      </div>
+    </div>
+    <div id="tableWrap" style="border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:calc(100vh - 140px)">
+      <table id="resultTable"><thead><tr id="resultHead"></tr></thead><tbody id="resultBody"></tbody></table>
+    </div>
+  </section>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+// --- tabs ---
+let autoFetchTimer = null;
+function activateTab(name){
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+  try { localStorage.setItem('veeqo_to_nav_tab', name); } catch {}
+  if (name === 'orders'){
+    // Auto-fetch on entering the Orders tab
+    if ($('apiKey') && $('apiKey').value && $('fetchBtn') && !$('fetchBtn').disabled){
+      $('fetchBtn').click();
+    }
+    startAutoRefresh();
+  } else {
+    stopAutoRefresh();
+  }
+}
+function startAutoRefresh(){
+  stopAutoRefresh();
+  if ($('autoRefresh') && !$('autoRefresh').checked) return;
+  autoFetchTimer = setInterval(() => {
+    if ($('apiKey').value && !$('fetchBtn').disabled) $('fetchBtn').click();
+  }, 5 * 60 * 1000);
+}
+function stopAutoRefresh(){
+  if (autoFetchTimer){ clearInterval(autoFetchTimer); autoFetchTimer = null; }
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => activateTab(b.dataset.tab)));
+try {
+  const saved = localStorage.getItem('veeqo_to_nav_tab');
+  if (saved) activateTab(saved);
+} catch {}
+const log = (msg, cls='') => {
+  const el = $('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  el.appendChild(line); el.scrollTop = el.scrollHeight;
+};
+
+// --- persisted settings ---
+const KEY = 'veeqo_to_nav_v1';
+function loadPrefs(){
+  try {
+    const p = JSON.parse(localStorage.getItem(KEY)||'{}');
+    if (p.apiKey){ $('apiKey').value = p.apiKey; $('remember').checked = true; }
+    if (p.baseUrl){ $('baseUrl').value = p.baseUrl; }
+  } catch {}
+}
+function savePrefs(){
+  const cur = (() => { try { return JSON.parse(localStorage.getItem(KEY)||'{}'); } catch { return {}; } })();
+  const p = { ...cur, baseUrl: $('baseUrl').value };
+  if ($('remember').checked) p.apiKey = $('apiKey').value;
+  localStorage.setItem(KEY, JSON.stringify(p));
+}
+function getPrefs(){ try { return JSON.parse(localStorage.getItem(KEY)||'{}'); } catch { return {}; } }
+function saveStoreSelection(){
+  const ids = Array.from($('stores').selectedOptions).map(o => o.value);
+  const p = getPrefs(); p.storeIds = ids;
+  localStorage.setItem(KEY, JSON.stringify(p));
+}
+$('apiKey').addEventListener('change', savePrefs);
+$('remember').addEventListener('change', savePrefs);
+$('baseUrl').addEventListener('change', savePrefs);
+loadPrefs();
+// Pre-fill from message if empty
+if (!$('apiKey').value) $('apiKey').value = 'Vqt/87c1c3eafce70de66eceaef4c838eecf';
+
+// Default date filters to today
+(function initDates(){
+  const today = new Date();
+  const iso = today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
+  if (!$('fromDate').value) $('fromDate').value = iso;
+  if (!$('toDate').value) $('toDate').value = iso;
+})();
+
+// Warn if opened via file:// (CORS will silently kill direct API calls)
+if (location.protocol === 'file:') {
+  log('Page opened via file:// — browsers often block API calls from file URLs. Serve via http://localhost (run "npx serve .") or use the proxy.', 'badge-warn');
+}
+
+// --- state ---
+let ORDERS = [];        // raw orders from Veeqo
+let MAPPING = {};       // cleanedItem -> { upc, sku, raw }
+let MAP_WB = null;      // workbook
+let RESULT = [];        // merged rows for export
+let BIN_WB = null;      // bin/stock workbook
+let BIN_MAP = {};       // cleanedSku -> { totalQty, byCode:{code:qty}, locations:[bin strings] }
+let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
+
+// =========================================================
+// Veeqo fetch
+// =========================================================
+async function veeqoGet(path, params){
+  const base = $('baseUrl').value.replace(/\/$/,'');
+  const url = new URL(base + path);
+  if (params) for (const [k,v] of Object.entries(params)) if (v!==''&&v!=null) url.searchParams.set(k, v);
+  const res = await fetch(url, { headers: { 'x-api-key': $('apiKey').value, 'Accept': 'application/json' } });
+  if (!res.ok){
+    const txt = await res.text().catch(()=> '');
+    throw new Error(`HTTP ${res.status} ${res.statusText} — ${txt.slice(0,200)}`);
+  }
+  return res.json();
+}
+
+async function loadStores({ silent = false } = {}){
+  if (!$('apiKey').value){
+    if (!silent) alert('Enter API key first.');
+    return false;
+  }
+  $('loadStoresBtn').disabled = true;
+  try {
+    log('Loading stores (channels)…');
+    const data = await veeqoGet('/channels', { page_size: 100 });
+    const arr = Array.isArray(data) ? data : (data.channels || data || []);
+    const sel = $('stores'); sel.innerHTML = '';
+    arr.forEach(c => {
+      const o = document.createElement('option');
+      o.value = String(c.id); o.textContent = `${c.name||c.title||'(unnamed)'} [#${c.id}]`;
+      sel.appendChild(o);
+    });
+    // Restore saved selection
+    const saved = (getPrefs().storeIds) || [];
+    if (saved.length){
+      const set = new Set(saved.map(String));
+      Array.from(sel.options).forEach(o => { if (set.has(o.value)) o.selected = true; });
+      log(`Restored ${Array.from(sel.selectedOptions).length} saved store selection(s).`);
+    }
+    log(`Loaded ${arr.length} stores.`, 'badge-ok');
+    return true;
+  } catch(e){
+    if (silent){
+      log(`Auto-load stores failed: ${e.message}`, 'badge-warn');
+    } else {
+      surfaceError('Load stores failed', e);
+    }
+    return false;
+  } finally {
+    $('loadStoresBtn').disabled = false;
+  }
+}
+$('loadStoresBtn').addEventListener('click', () => loadStores());
+$('stores').addEventListener('change', saveStoreSelection);
+
+// Auto-load stores on page load if we have an API key
+if ($('apiKey').value) loadStores({ silent: true });
+// Also auto-load if the user pastes/changes the API key
+$('apiKey').addEventListener('change', () => { if ($('apiKey').value) loadStores({ silent: true }); });
+// And if the Base URL changes (e.g. switching to proxy)
+$('baseUrl').addEventListener('change', () => { if ($('apiKey').value) loadStores({ silent: true }); });
+
+function surfaceError(label, e){
+  console.error(label, e);
+  log(`${label}: ${e.message}`, 'badge-err');
+  if (/Failed to fetch|CORS|NetworkError/i.test(e.message) || e.name === 'TypeError'){
+    log('Tip: this is almost always CORS. Run "node proxy.js" and switch Base URL to http://localhost:8787.', 'badge-warn');
+    alert(`${label}\n\n${e.message}\n\nThis is usually a CORS block. Open a terminal here and run:\n  node proxy.js\nThen change "Base URL" to http://localhost:8787 and try again.`);
+  } else {
+    alert(`${label}\n\n${e.message}`);
+  }
+}
+
+$('fetchBtn').addEventListener('click', async () => {
+  if (!$('apiKey').value){ alert('Enter API key first.'); return; }
+  $('fetchBtn').disabled = true;
+  ORDERS = [];
+  try {
+    const baseParams = {
+      page_size: $('pageSize').value || 50,
+      status: $('status').value || undefined,
+      created_at_min: $('fromDate').value ? new Date($('fromDate').value).toISOString() : undefined,
+      created_at_max: $('toDate').value ? new Date($('toDate').value+'T23:59:59').toISOString() : undefined,
+      query: $('query').value || undefined,
+    };
+    const storeIds = Array.from($('stores').selectedOptions).map(o => o.value);
+    const maxPages = parseInt($('maxPages').value || '20',10);
+    const channels = storeIds.length ? storeIds : [null];
+    log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'})`);
+
+    for (const ch of channels){
+      const params = { ...baseParams };
+      if (ch) params.channel_id = ch;
+      const label = ch ? `channel ${ch}` : 'all channels';
+      for (let page=1; page<=maxPages; page++){
+        const data = await veeqoGet('/orders', { ...params, page });
+        const arr = Array.isArray(data) ? data : (data.orders || []);
+        if (!arr.length){ log(`${label} p${page}: no more.`); break; }
+        ORDERS.push(...arr);
+        log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
+        if (arr.length < (params.page_size|0)) break;
+      }
+    }
+    $('ordersCount').textContent = `${ORDERS.length} orders`;
+    log(`Done. ${ORDERS.length} orders fetched.`, 'badge-ok');
+    const now = new Date();
+    if ($('lastFetched')) $('lastFetched').textContent = `Last fetched: ${now.toLocaleTimeString()}`;
+    updateOrderStats();
+    previewOrders();
+  } catch (e){
+    surfaceError('Fetch failed', e);
+  } finally {
+    $('fetchBtn').disabled = false;
+  }
+});
+
+// ----- Order field extractors (Veeqo JSON shape) -----
+function customerOf(o){
+  const ship = o.deliver_to || o.shipping_address || {};
+  const name = [ship.first_name, ship.last_name].filter(Boolean).join(' ').trim()
+            || (o.customer && (o.customer.full_name || [o.customer.first_name, o.customer.last_name].filter(Boolean).join(' '))) || '';
+  const loc = [ship.city, ship.state || ship.region, ship.zip || ship.zip_code].filter(Boolean).join(', ');
+  return loc ? `${name} — ${loc}` : name;
+}
+function shipFromOf(o){
+  // Try allocations[].warehouse.name first, then top-level warehouse
+  const allocs = o.allocations || [];
+  const names = new Set();
+  for (const a of allocs){
+    const w = a.warehouse || a.warehouse_location || {};
+    if (w.name) names.add(w.name);
+  }
+  if (!names.size && o.warehouse && o.warehouse.name) names.add(o.warehouse.name);
+  return Array.from(names).join(' / ');
+}
+function deliveryOf(o){
+  const dm = o.delivery_method;
+  if (!dm) return o.shipping_method || '';
+  if (typeof dm === 'string') return dm;
+  return dm.name || dm.code || dm.title || '';
+}
+function itemsSummary(o){
+  const lis = o.line_items || [];
+  return lis.map(li => {
+    const sv = li.sellable || li.product || {};
+    const sku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+    const title = sv.product_title || li.title || '';
+    const qty = li.quantity ?? li.quantity_ordered ?? '';
+    return `${qty}× ${sku}${title?` — ${title}`:''}`;
+  }).join(' | ');
+}
+// Extract the EC item number, drop "-FBM" or any trailing "-suffix"
+function ecomItem(sku){
+  const s = String(sku||'').trim();
+  if (!s) return '';
+  // strip "-FBM", "-FBA", "-V2" etc — anything from the first dash onward
+  const m = s.match(/^([A-Za-z0-9]+)/);
+  return m ? m[1] : s;
+}
+function ecomItemsOf(o){
+  const lis = o.line_items || [];
+  const seen = [];
+  for (const li of lis){
+    const sv = li.sellable || li.product || {};
+    const sku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+    const v = ecomItem(sku);
+    if (v && !seen.includes(v)) seen.push(v);
+  }
+  return seen.join(' | ');
+}
+
+function previewOrders(){
+  const cols = ['Order','Customer','Ship from','Delivery','Item','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES, 'Status','Created'];
+  $('resultHead').innerHTML = cols.map(h=>`<th>${h}</th>`).join('');
+  const out = [];
+  let count = 0;
+  const filter = ($('filterText') ? $('filterText').value : '').trim().toLowerCase();
+  for (const o of ORDERS){
+    const lis = o.line_items || [];
+    const cust = customerOf(o), shipFrom = shipFromOf(o), del = deliveryOf(o);
+    const list = lis.length ? lis : [null];
+    for (const li of list){
+      const sv = (li && (li.sellable || li.product)) || {};
+      const sku = sv.sku_code || sv.sku || (li && (li.sku_code || li.sku)) || '';
+      const title = sv.product_title || (li && li.title) || '';
+      const qty = li ? (li.quantity ?? li.quantity_ordered ?? '') : '';
+      const itemCell = sku ? `${sku}${title?` — ${title}`:''}` : '';
+      const ecom = ecomItem(sku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(sku)] || null;
+      const lookupSku = m ? m.sku : '';
+      // Filter: match against Order, Customer, Ecom Item, SKU (lookup or raw), UPC
+      if (filter){
+        const lookupUpcCheck = m ? m.upc : '';
+        const haystack = [
+          o.number || o.id || '',
+          cust,
+          ecom,
+          lookupSku,
+          sku,
+          lookupUpcCheck
+        ].join(' ').toLowerCase();
+        if (!haystack.includes(filter)) continue;
+      }
+      const lookupUpc = m ? m.upc : '';
+      const binEntry = lookupBinEntry(lookupSku, ecom, sku);
+      const codeCells = LOCATION_CODES.map(code => {
+        const v = binEntry && binEntry.byCode && binEntry.byCode[code];
+        return `<td${!v?' class="muted"':''}>${esc(v == null || v === 0 ? '' : v)}</td>`;
+      }).join('');
+      out.push(`<tr>
+        <td>${esc(o.number||o.id)}</td>
+        <td>${esc(cust)}</td>
+        <td>${esc(shipFrom)}</td>
+        <td>${esc(del)}</td>
+        <td>${esc(itemCell)}</td>
+        <td>${esc(ecom)}</td>
+        <td${!lookupSku?' class="badge-warn"':''}>${esc(lookupSku)}</td>
+        <td${!lookupUpc?' class="badge-warn"':''}>${esc(lookupUpc)}</td>
+        <td>${esc(qty)}</td>
+        ${codeCells}
+        <td>${esc(o.status||'')}</td>
+        <td>${esc(o.created_at||'')}</td>
+      </tr>`);
+      if (++count >= 1000) break;
+    }
+    if (count >= 1000) break;
+  }
+  const rows = out.join('');
+  $('resultBody').innerHTML = rows;
+}
+
+// =========================================================
+// Mapping file
+// =========================================================
+// ---------- IndexedDB persistence for the mapping file ----------
+const IDB_NAME = 'veeqo_to_nav_db';
+const IDB_STORES = ['mapping','binfile'];
+function idbOpen(){
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(IDB_NAME, 2);
+    r.onupgradeneeded = () => {
+      for (const s of IDB_STORES){
+        if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s);
+      }
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbSave(store, rec){
+  const db = await idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(store, 'readwrite');
+    tx.objectStore(store).put(rec, 'file');
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbLoad(store){
+  try {
+    const db = await idbOpen();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction(store, 'readonly');
+      const r = tx.objectStore(store).get('file');
+      r.onsuccess = () => res(r.result || null);
+      r.onerror = () => rej(r.error);
+    });
+  } catch { return null; }
+}
+async function idbClear(store){
+  try {
+    const db = await idbOpen();
+    await new Promise((res, rej) => {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).delete('file');
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    });
+  } catch {}
+}
+function setMapStatus(text, ok=false){
+  const el = $('mapStatus');
+  el.textContent = text;
+  el.className = 'pill ' + (ok ? 'badge-ok' : '');
+}
+
+function loadWorkbookFromBuffer(buf, name){
+  MAP_WB = XLSX.read(buf, {type:'array'});
+  const sel = $('mapSheet'); sel.innerHTML = '';
+  MAP_WB.SheetNames.forEach(n => { const o = document.createElement('option'); o.value=o.textContent=n; sel.appendChild(o); });
+  sel.dispatchEvent(new Event('change'));
+  setMapStatus(`Saved: ${name}`, true);
+}
+
+$('mapFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const buf = await f.arrayBuffer();
+  loadWorkbookFromBuffer(buf, f.name);
+  try {
+    await idbSave('mapping', { name: f.name, savedAt: new Date().toISOString(), data: buf });
+    log(`Mapping file "${f.name}" saved to browser storage.`, 'badge-ok');
+  } catch (err) {
+    log(`Could not persist mapping file: ${err.message}`, 'badge-warn');
+  }
+});
+
+$('clearMapBtn').addEventListener('click', async () => {
+  await idbClear('mapping');
+  MAP_WB = null; MAPPING = {};
+  $('mapSheet').innerHTML = '';
+  for (const id of ['colItem','colUpc','colSku']) $(id).innerHTML = '';
+  $('mapFile').value = '';
+  setMapStatus('No mapping saved', false);
+  log('Saved mapping cleared.', 'badge-warn');
+  if (ORDERS.length) previewOrders();
+});
+
+// Auto-restore on load
+(async () => {
+  const rec = await idbLoad('mapping');
+  if (rec && rec.data){
+    try {
+      loadWorkbookFromBuffer(rec.data, rec.name || '(saved)');
+      setMapStatus(`Restored from storage: ${rec.name}`, true);
+      log(`Restored saved mapping "${rec.name}" (${new Date(rec.savedAt).toLocaleString()}).`, 'badge-ok');
+    } catch (err) {
+      log(`Failed to restore saved mapping: ${err.message}`, 'badge-warn');
+    }
+  }
+  const binRec = await idbLoad('binfile');
+  if (binRec && binRec.data){
+    try {
+      loadBinWorkbookFromBuffer(binRec.data, binRec.name || '(saved)');
+      setBinStatus(`Restored from storage: ${binRec.name}`, true);
+      log(`Restored saved bin file "${binRec.name}" (${new Date(binRec.savedAt).toLocaleString()}).`, 'badge-ok');
+    } catch (err) {
+      log(`Failed to restore bin file: ${err.message}`, 'badge-warn');
+    }
+  }
+})();
+$('mapSheet').addEventListener('change', () => {
+  if (!MAP_WB) return;
+  const ws = MAP_WB.Sheets[$('mapSheet').value];
+  let json = XLSX.utils.sheet_to_json(ws, { defval:'' });
+  let cols = json.length ? Object.keys(json[0]) : [];
+  // If the sheet has no header (raw rows like 294216, EC00173128, 97963898256),
+  // re-parse with synthetic A,B,C headers so the user can still pick columns.
+  const looksHeaderless = cols.length && cols.every(c => /^(__EMPTY|[0-9]+|[A-Z]+)$/i.test(String(c)) || /^EC\d+/i.test(String(json[0][c])));
+  if (!cols.length || looksHeaderless){
+    json = XLSX.utils.sheet_to_json(ws, { header:'A', defval:'' });
+    cols = json.length ? Object.keys(json[0]) : [];
+  }
+  for (const id of ['colItem','colUpc','colSku']){
+    const sel = $(id); sel.innerHTML = cols.map(c=>`<option>${c}</option>`).join('');
+  }
+  // Heuristic guesses by header text
+  guess('colItem', cols, /item|ecom|^B$/i);
+  guess('colUpc', cols, /upc|barcode|gtin|ean|^C$/i);
+  guess('colSku', cols, /sku|local|internal|nav|^A$/i);
+  // If guesses didn't trigger and we have 3 cols, default A=SKU, B=Item, C=UPC
+  if (cols.length >= 3 && cols[0] && cols[1] && cols[2]){
+    if (!$('colSku').value) $('colSku').value = cols[0];
+    if (!$('colItem').value) $('colItem').value = cols[1];
+    if (!$('colUpc').value) $('colUpc').value = cols[2];
+  }
+  // Override with saved selections if they still match available columns
+  try {
+    const saved = JSON.parse(localStorage.getItem('veeqo_to_nav_mapcols') || '{}');
+    for (const id of ['colItem','colUpc','colSku']){
+      if (saved[id] && cols.includes(saved[id])) $(id).value = saved[id];
+    }
+  } catch {}
+  log(`Mapping sheet "${$('mapSheet').value}" loaded: ${json.length} rows, ${cols.length} columns`);
+  rebuildMapping();
+});
+function guess(selId, cols, rx){ const m = cols.find(c=>rx.test(c)); if (m) $(selId).value = m; }
+
+function rebuildMapping(){
+  if (!MAP_WB) { MAPPING = {}; return; }
+  const ws = MAP_WB.Sheets[$('mapSheet').value];
+  if (!ws) { MAPPING = {}; return; }
+  const rows = XLSX.utils.sheet_to_json(ws, { header: looksLikeLetterHeader() ? 'A' : undefined, defval: '' });
+  const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
+  MAPPING = {};
+  for (const r of rows){
+    const key = cleanItem(r[cI]);
+    if (!key) continue;
+    MAPPING[key] = { upc: String(r[cU]||'').trim(), sku: String(r[cS]||'').trim(), raw: r[cI] };
+  }
+  log(`Mapping ready: ${Object.keys(MAPPING).length} entries.`, 'badge-ok');
+  if (ORDERS.length) previewOrders(); // refresh preview to fill SKU/UPC
+}
+function looksLikeLetterHeader(){ return /^[A-Z]$/.test($('colItem').value || ''); }
+function saveMapColPrefs(){
+  try {
+    const data = { colItem: $('colItem').value, colUpc: $('colUpc').value, colSku: $('colSku').value };
+    localStorage.setItem('veeqo_to_nav_mapcols', JSON.stringify(data));
+  } catch {}
+}
+for (const id of ['colItem','colUpc','colSku']){
+  $(id).addEventListener('change', () => { saveMapColPrefs(); rebuildMapping(); });
+}
+
+// =========================================================
+// Bin / Stock file
+// =========================================================
+const BIN_PREFS_KEY = 'veeqo_to_nav_bincols';
+const BIN_ZONES_KEY = 'veeqo_to_nav_binzones';
+const DEFAULT_ZONES = ['A','B','C','GOLDEN'];
+
+function setBinStatus(text, ok=false){
+  const el = $('binStatus');
+  el.textContent = text;
+  el.className = 'pill ' + (ok ? 'badge-ok' : '');
+}
+function zoneOf(loc){
+  const s = String(loc==null?'':loc).trim();
+  if (!s) return '';
+  // Take the first token before any separator (-, /, space, .).
+  // If there is no separator, treat the whole bin code as its own zone.
+  const m = s.match(/^([^\s\-\/\.]+)/);
+  return (m ? m[1] : s).toUpperCase();
+}
+function getSavedZones(){
+  try { return JSON.parse(localStorage.getItem(BIN_ZONES_KEY)) || DEFAULT_ZONES; }
+  catch { return DEFAULT_ZONES.slice(); }
+}
+function saveBinColPrefs(){
+  try {
+    localStorage.setItem(BIN_PREFS_KEY, JSON.stringify({
+      binColSku: $('binColSku').value,
+      binColLoc: $('binColLoc').value,
+      binColQty: $('binColQty').value,
+      binColCode: $('binColCode').value,
+    }));
+  } catch {}
+}
+function saveBinZones(){
+  const zones = Array.from($('binZones').selectedOptions).map(o => o.value);
+  try { localStorage.setItem(BIN_ZONES_KEY, JSON.stringify(zones)); } catch {}
+}
+
+function loadBinWorkbookFromBuffer(buf, name){
+  BIN_WB = XLSX.read(buf, { type:'array' });
+  const sel = $('binSheet'); sel.innerHTML = '';
+  BIN_WB.SheetNames.forEach(n => { const o = document.createElement('option'); o.value=o.textContent=n; sel.appendChild(o); });
+  sel.dispatchEvent(new Event('change'));
+  setBinStatus(`Saved: ${name}`, true);
+}
+
+$('binFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const buf = await f.arrayBuffer();
+  loadBinWorkbookFromBuffer(buf, f.name);
+  try {
+    await idbSave('binfile', { name: f.name, savedAt: new Date().toISOString(), data: buf });
+    log(`Bin file "${f.name}" saved to browser storage.`, 'badge-ok');
+  } catch (err) {
+    log(`Could not persist bin file: ${err.message}`, 'badge-warn');
+  }
+});
+
+$('clearBinBtn').addEventListener('click', async () => {
+  await idbClear('binfile');
+  BIN_WB = null; BIN_MAP = {};
+  $('binSheet').innerHTML = '';
+  for (const id of ['binColSku','binColLoc','binColQty','binColCode','binZones']) $(id).innerHTML = '';
+  $('binFile').value = '';
+  setBinStatus('No bin file saved', false);
+  log('Saved bin file cleared.', 'badge-warn');
+  if (ORDERS.length) previewOrders();
+});
+
+$('binSheet').addEventListener('change', () => {
+  if (!BIN_WB) return;
+  const ws = BIN_WB.Sheets[$('binSheet').value];
+  let json = XLSX.utils.sheet_to_json(ws, { defval:'' });
+  let cols = json.length ? Object.keys(json[0]) : [];
+  const looksHeaderless = cols.length && cols.every(c => /^(__EMPTY|[0-9]+|[A-Z]+)$/i.test(String(c)));
+  if (!cols.length || looksHeaderless){
+    json = XLSX.utils.sheet_to_json(ws, { header:'A', defval:'' });
+    cols = json.length ? Object.keys(json[0]) : [];
+  }
+  for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
+    const sel = $(id); sel.innerHTML = '<option value="">(none)</option>' + cols.map(c => `<option>${c}</option>`).join('');
+  }
+  // Heuristic guesses
+  const guessSku = cols.find(c => /item\s*no|item_?no|sku|item/i.test(c));
+  if (guessSku) $('binColSku').value = guessSku;
+  const guessLoc = cols.find(c => /bin\s*code/i.test(c)) || cols.find(c => /^bin$|location\s*name|bin\s*name|aisle|shelf|position/i.test(c)) || cols.find(c => /bin|location/i.test(c));
+  if (guessLoc) $('binColLoc').value = guessLoc;
+  const guessQty = cols.find(c => /qty|quantity|on\s*hand|stock|available|count/i.test(c));
+  if (guessQty) $('binColQty').value = guessQty;
+  const guessCode = cols.find(c => /location\s*code|loc\s*code|warehouse\s*code|wh\s*code|warehouse/i.test(c));
+  if (guessCode) $('binColCode').value = guessCode;
+  // Restore saved selections
+  try {
+    const saved = JSON.parse(localStorage.getItem(BIN_PREFS_KEY) || '{}');
+    for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
+      if (saved[id] != null && (saved[id] === '' || cols.includes(saved[id]))) $(id).value = saved[id];
+    }
+  } catch {}
+  log(`Bin sheet "${$('binSheet').value}" loaded: ${json.length} rows, ${cols.length} columns`);
+  populateBinZones();
+});
+
+function populateBinZones(){
+  if (!BIN_WB) { $('binZones').innerHTML = ''; return; }
+  const ws = BIN_WB.Sheets[$('binSheet').value]; if (!ws) return;
+  const headerOpt = /^[A-Z]$/.test($('binColLoc').value || '') ? 'A' : undefined;
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval:'' });
+  const cL = $('binColLoc').value;
+  const zones = new Set();
+  for (const r of rows){
+    const z = zoneOf(r[cL]); if (z) zones.add(z);
+  }
+  const sorted = Array.from(zones).sort();
+  const saved = getSavedZones().map(z => z.toUpperCase());
+  // Always include defaults so user can pick them even if not yet present
+  for (const d of DEFAULT_ZONES) if (!sorted.includes(d)) sorted.push(d);
+  sorted.sort();
+  const sel = $('binZones');
+  sel.innerHTML = sorted.map(z => `<option value="${z}"${saved.includes(z)?' selected':''}>${z}</option>`).join('');
+  // Show all zone codes at once (no scrolling) — capped at a reasonable max so the panel doesn't become huge
+  sel.size = Math.min(Math.max(sorted.length, 4), 20);
+  $('binZonesCount').textContent = `(${sorted.length} found)`;
+  rebuildBinMap();
+}
+
+$('binZonesAll').addEventListener('click', () => {
+  Array.from($('binZones').options).forEach(o => o.selected = true);
+  saveBinZones(); rebuildBinMap();
+});
+$('binZonesNone').addEventListener('click', () => {
+  Array.from($('binZones').options).forEach(o => o.selected = false);
+  saveBinZones(); rebuildBinMap();
+});
+$('binZonesDefault').addEventListener('click', () => {
+  Array.from($('binZones').options).forEach(o => o.selected = DEFAULT_ZONES.includes(o.value));
+  saveBinZones(); rebuildBinMap();
+});
+
+function toNum(v){
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number') return v;
+  const n = Number(String(v).replace(/[, ]/g,''));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function rebuildBinMap(){
+  if (!BIN_WB) { BIN_MAP = {}; LOCATION_CODES = []; return; }
+  const ws = BIN_WB.Sheets[$('binSheet').value];
+  if (!ws) { BIN_MAP = {}; LOCATION_CODES = []; return; }
+  const fields = ['binColSku','binColLoc','binColQty','binColCode'];
+  const headerOpt = fields.some(id => /^[A-Z]$/.test($(id).value||'')) ? 'A' : undefined;
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval:'' });
+  const cS = $('binColSku').value, cQ = $('binColQty').value, cC = $('binColCode').value;
+  // NOTE: zone filter (binColLoc / binZones) is intentionally NOT applied here.
+  // We do a clean SKU × Location Code pivot of every row, summing Quantity —
+  // exactly like an Excel pivot table grouping Item No by Location Code.
+  BIN_MAP = {};
+  const allCodes = new Set();
+  let kept = 0;
+  for (const r of rows){
+    const code = cC ? String(r[cC]==null?'':r[cC]).trim() : '';
+    if (code) allCodes.add(code);
+    const sku = cleanItem(r[cS]); if (!sku) continue;
+    const qty = cQ ? toNum(r[cQ]) : 0;
+    let entry = BIN_MAP[sku];
+    if (!entry){
+      entry = { totalQty: 0, byCode: {} };
+      BIN_MAP[sku] = entry;
+    }
+    entry.totalQty += qty;
+    if (code){
+      entry.byCode[code] = (entry.byCode[code] || 0) + qty;
+    }
+    kept++;
+  }
+  LOCATION_CODES = Array.from(allCodes).sort();
+  log(`Bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows. Location codes: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
+  if (ORDERS.length) previewOrders();
+}
+
+for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
+  $(id).addEventListener('change', () => { saveBinColPrefs(); rebuildBinMap(); });
+}
+$('binZones').addEventListener('change', () => { saveBinZones(); rebuildBinMap(); });
+
+function lookupBinEntry(localSku, ecom, rawSku){
+  if (!Object.keys(BIN_MAP).length) return null;
+  return BIN_MAP[cleanItem(localSku)] || BIN_MAP[cleanItem(rawSku)] || BIN_MAP[cleanItem(ecom)] || null;
+}
+function binLocationsOf(entry){
+  if (!entry) return '';
+  const seen = new Set(); const list = [];
+  for (const l of entry.locations){ if (!seen.has(l)){ seen.add(l); list.push(l); } }
+  return list.join(' / ');
+}
+function binStockBreakdown(entry){
+  if (!entry) return '';
+  const codes = Object.keys(entry.byCode);
+  if (!codes.length) return entry.totalQty ? String(entry.totalQty) : '';
+  const parts = codes.map(c => `${c}: ${entry.byCode[c]}`);
+  return `Total ${entry.totalQty} — ${parts.join(' | ')}`;
+}
+
+// =========================================================
+// Cleaning
+// =========================================================
+function cleanItem(raw){
+  let s = String(raw==null?'':raw);
+  if ($('cleanTrim').checked) s = s.trim();
+  const pre = $('cleanPrefix').value.trim();
+  if (pre) try { s = s.replace(new RegExp(pre), ''); } catch {}
+  const suf = $('cleanSuffix').value.trim();
+  if (suf) try { s = s.replace(new RegExp(suf), ''); } catch {}
+  if ($('cleanStripNonAlnum').checked) s = s.replace(/[^A-Za-z0-9]/g,'');
+  if ($('cleanLeadingZeros').checked) s = s.replace(/^0+(?=\d)/,'');
+  if ($('cleanUpper').checked) s = s.toUpperCase();
+  return s;
+}
+
+// =========================================================
+// Build merged list
+// =========================================================
+$('buildBtn').addEventListener('click', () => {
+  if (!ORDERS.length) return log('No orders fetched yet.', 'badge-warn');
+  if (!MAP_WB) return log('No mapping file loaded.', 'badge-warn');
+
+  // Build mapping dict
+  const ws = MAP_WB.Sheets[$('mapSheet').value];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
+  const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
+  MAPPING = {};
+  for (const r of rows){
+    const key = cleanItem(r[cI]);
+    if (!key) continue;
+    MAPPING[key] = { upc: String(r[cU]||''), sku: String(r[cS]||''), raw: r[cI] };
+  }
+  log(`Mapping built: ${Object.keys(MAPPING).length} entries.`);
+
+  // Flatten orders → line items
+  RESULT = [];
+  let matched = 0, unmatched = 0;
+  for (const o of ORDERS){
+    const cust = customerOf(o);
+    const shipFrom = shipFromOf(o);
+    const delivery = deliveryOf(o);
+    const lis = o.line_items || [];
+    for (const li of lis){
+      const sv = li.sellable || li.product || {};
+      const itemRaw = sv.sku_code || sv.sku || li.sku_code || li.sku || sv.product_title || '';
+      const cleaned = cleanItem(itemRaw);
+      const m = MAPPING[cleaned];
+      if (m) matched++; else unmatched++;
+      const localSku = m ? m.sku : '';
+      const binEntry = lookupBinEntry(localSku, ecomItem(itemRaw), itemRaw);
+      const stock_total = binEntry ? binEntry.totalQty : '';
+      const codeFields = {};
+      for (const code of LOCATION_CODES){
+        codeFields['stock_' + code] = (binEntry && binEntry.byCode && binEntry.byCode[code]) || '';
+      }
+      RESULT.push({
+        order_number: o.number || o.id,
+        order_status: o.status || '',
+        created_at: o.created_at || '',
+        customer: cust,
+        ship_from: shipFrom,
+        delivery: delivery,
+        item_raw: itemRaw,
+        ecom_item: ecomItem(itemRaw),
+        item_cleaned: cleaned,
+        title: sv.product_title || li.title || '',
+        quantity: li.quantity ?? li.quantity_ordered ?? '',
+        price: li.price_per_unit ?? li.price ?? '',
+        upc: m ? m.upc : '',
+        local_sku: localSku,
+        stock_total: stock_total,
+        ...codeFields,
+        match: m ? 'YES' : 'NO',
+      });
+    }
+  }
+  $('linesCount').textContent = `${RESULT.length} lines`;
+  $('matchedCount').textContent = `${matched} matched`;
+  $('unmatchedCount').textContent = `${unmatched} unmatched`;
+  $('matchedCount').className = 'pill badge-ok';
+  $('unmatchedCount').className = 'pill ' + (unmatched ? 'badge-warn' : '');
+  renderResult();
+  $('dlXlsx').disabled = $('dlCsv').disabled = !RESULT.length;
+  log(`Built ${RESULT.length} lines (${matched} matched, ${unmatched} unmatched).`, 'badge-ok');
+  if (RESULT.length) activateTab('orders');
+});
+
+function renderResult(){
+  const codeCols = LOCATION_CODES.map(c => 'stock_' + c);
+  const cols = ['order_number','customer','ship_from','delivery','item_raw','ecom_item','item_cleaned','title','quantity','upc','local_sku','stock_total', ...codeCols, 'match','price','order_status','created_at'];
+  $('resultHead').innerHTML = cols.map(c=>`<th>${c}</th>`).join('');
+  const filter = $('filterText').value.toLowerCase();
+  const rows = RESULT.filter(r => !filter || cols.some(c => String(r[c]).toLowerCase().includes(filter)));
+  $('resultBody').innerHTML = rows.slice(0,2000).map(r =>
+    `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}</tr>`
+  ).join('');
+}
+$('filterText').addEventListener('input', () => {
+  // Re-render whichever view is currently active. previewOrders re-renders the live table;
+  // renderResult re-renders the post-Build merged-list table.
+  if (RESULT.length) renderResult();
+  if (ORDERS.length) previewOrders();
+});
+$('clearFilterBtn').addEventListener('click', () => {
+  $('filterText').value = '';
+  if (RESULT.length) renderResult();
+  if (ORDERS.length) previewOrders();
+});
+
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+// =========================================================
+// Downloads
+// =========================================================
+$('dlXlsx').addEventListener('click', () => {
+  const ws = XLSX.utils.json_to_sheet(RESULT);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Orders');
+  XLSX.writeFile(wb, `veeqo-orders-${stamp()}.xlsx`);
+});
+$('dlCsv').addEventListener('click', () => {
+  const ws = XLSX.utils.json_to_sheet(RESULT);
+  const csv = XLSX.utils.sheet_to_csv(ws);
+  const blob = new Blob([csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `veeqo-orders-${stamp()}.csv`; a.click();
+  URL.revokeObjectURL(a.href);
+});
+function stamp(){ const d=new Date(); return d.toISOString().slice(0,16).replace(/[:T-]/g,''); }
+
+// =========================================================
+// Nav export — Sales Order | ECNUMBER | ITEM | UPC + Location Code qty columns
+// =========================================================
+function updateOrderStats(){
+  let totalItems = 0;
+  for (const o of ORDERS){
+    for (const li of (o.line_items || [])){
+      totalItems += Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+    }
+  }
+  if ($('statOrders')) $('statOrders').textContent = ORDERS.length.toLocaleString();
+  if ($('statItems')) $('statItems').textContent = totalItems.toLocaleString();
+}
+
+function buildNavRows(){
+  const rows = [];
+  for (const o of ORDERS){
+    const lis = o.line_items || [];
+    for (const li of lis){
+      const sv = li.sellable || li.product || {};
+      const sku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+      const ecom = ecomItem(sku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(sku)] || null;
+      const lookupSku = m ? m.sku : '';
+      const lookupUpc = m ? m.upc : '';
+      const binEntry = lookupBinEntry(lookupSku, ecom, sku);
+      const row = {
+        'Sales Order': o.number || o.id,
+        'ECNUMBER': ecom,
+        'ITEM': lookupSku,
+        'UPC': lookupUpc,
+      };
+      for (const code of LOCATION_CODES){
+        row[code] = (binEntry && binEntry.byCode && binEntry.byCode[code]) || '';
+      }
+      rows.push(row);
+    }
+  }
+  return rows;
+}
+// Initialize stat boxes on load
+updateOrderStats();
+
+// Auto-refresh checkbox toggle (only restarts the timer if currently on the Orders tab)
+$('autoRefresh').addEventListener('change', () => {
+  const onOrders = document.querySelector('.tab-btn.active')?.dataset.tab === 'orders';
+  if (onOrders) startAutoRefresh();
+  else stopAutoRefresh();
+});
+
+$('exportNavBtn').addEventListener('click', () => {
+  if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
+  const rows = buildNavRows();
+  const header = ['Sales Order','ECNUMBER','ITEM','UPC', ...LOCATION_CODES];
+  const ws = XLSX.utils.json_to_sheet(rows, { header });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Nav Export');
+  XLSX.writeFile(wb, `nav-export-${stamp()}.xlsx`);
+  log(`Nav export: ${rows.length} rows downloaded.`, 'badge-ok');
+});
+
+</script>
+</body>
+</html>
