@@ -167,6 +167,10 @@
         <div><label>Quantity column</label><select id="binColQty"></select></div>
         <div><label>Location Code column</label><select id="binColCode"></select></div>
       </div>
+      <div class="row">
+        <div><label>Zone Code column</label><select id="binColZone"></select></div>
+        <div></div>
+      </div>
       <label>Allowed zones (filter) <span id="binZonesCount" style="color:var(--muted);font-weight:normal">(0)</span></label>
       <div style="display:flex;gap:6px;margin-bottom:4px">
         <button id="binZonesAll" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Select all</button>
@@ -174,7 +178,7 @@
         <button id="binZonesDefault" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Defaults (A/B/C/GOLDEN)</button>
       </div>
       <select id="binZones" multiple size="5" style="height:auto"></select>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">Informational only — the per-Location-Code totals shown in the Orders tab are a pure pivot of <b>SKU × Location Code</b> from the bin file (every row). The zone list above just shows what bin code prefixes exist. Selection is saved.</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Only rows whose <b>Zone Code</b> is selected above are included in the Orders-tab totals. Defaults: <code>ZONE A</code>, <code>ZONE B</code>, <code>ZONE C</code>, <code>GOLDEN</code>. Selection is saved.</div>
     </fieldset>
 
     <fieldset>
@@ -732,7 +736,7 @@ for (const id of ['colItem','colUpc','colSku']){
 // =========================================================
 const BIN_PREFS_KEY = 'veeqo_to_nav_bincols';
 const BIN_ZONES_KEY = 'veeqo_to_nav_binzones';
-const DEFAULT_ZONES = ['A','B','C','GOLDEN'];
+const DEFAULT_ZONES = ['ZONE A','ZONE B','ZONE C','GOLDEN'];
 
 function setBinStatus(text, ok=false){
   const el = $('binStatus');
@@ -758,6 +762,7 @@ function saveBinColPrefs(){
       binColLoc: $('binColLoc').value,
       binColQty: $('binColQty').value,
       binColCode: $('binColCode').value,
+      binColZone: $('binColZone').value,
     }));
   } catch {}
 }
@@ -790,7 +795,7 @@ $('clearBinBtn').addEventListener('click', async () => {
   await idbClear('binfile');
   BIN_WB = null; BIN_MAP = {};
   $('binSheet').innerHTML = '';
-  for (const id of ['binColSku','binColLoc','binColQty','binColCode','binZones']) $(id).innerHTML = '';
+  for (const id of ['binColSku','binColLoc','binColQty','binColCode','binColZone','binZones']) $(id).innerHTML = '';
   $('binFile').value = '';
   setBinStatus('No bin file saved', false);
   log('Saved bin file cleared.', 'badge-warn');
@@ -807,7 +812,7 @@ $('binSheet').addEventListener('change', () => {
     json = XLSX.utils.sheet_to_json(ws, { header:'A', defval:'' });
     cols = json.length ? Object.keys(json[0]) : [];
   }
-  for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
+  for (const id of ['binColSku','binColLoc','binColQty','binColCode','binColZone']){
     const sel = $(id); sel.innerHTML = '<option value="">(none)</option>' + cols.map(c => `<option>${c}</option>`).join('');
   }
   // Heuristic guesses
@@ -817,12 +822,14 @@ $('binSheet').addEventListener('change', () => {
   if (guessLoc) $('binColLoc').value = guessLoc;
   const guessQty = cols.find(c => /qty|quantity|on\s*hand|stock|available|count/i.test(c));
   if (guessQty) $('binColQty').value = guessQty;
-  const guessCode = cols.find(c => /location\s*code|loc\s*code|warehouse\s*code|wh\s*code|warehouse/i.test(c));
+  const guessCode = cols.find(c => /^location$|location\s*code|loc\s*code|warehouse\s*code|wh\s*code|warehouse/i.test(c));
   if (guessCode) $('binColCode').value = guessCode;
+  const guessZone = cols.find(c => /^zone$|zone\s*code|zone\s*name/i.test(c));
+  if (guessZone) $('binColZone').value = guessZone;
   // Restore saved selections
   try {
     const saved = JSON.parse(localStorage.getItem(BIN_PREFS_KEY) || '{}');
-    for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
+    for (const id of ['binColSku','binColLoc','binColQty','binColCode','binColZone']){
       if (saved[id] != null && (saved[id] === '' || cols.includes(saved[id]))) $(id).value = saved[id];
     }
   } catch {}
@@ -833,12 +840,18 @@ $('binSheet').addEventListener('change', () => {
 function populateBinZones(){
   if (!BIN_WB) { $('binZones').innerHTML = ''; return; }
   const ws = BIN_WB.Sheets[$('binSheet').value]; if (!ws) return;
-  const headerOpt = /^[A-Z]$/.test($('binColLoc').value || '') ? 'A' : undefined;
-  const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval:'' });
+  const cZ = $('binColZone').value;
   const cL = $('binColLoc').value;
+  const headerOpt = (/^[A-Z]$/.test(cZ||'') || /^[A-Z]$/.test(cL||'')) ? 'A' : undefined;
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval:'' });
   const zones = new Set();
   for (const r of rows){
-    const z = zoneOf(r[cL]); if (z) zones.add(z);
+    if (cZ){
+      const v = String(r[cZ]==null?'':r[cZ]).trim().toUpperCase();
+      if (v) zones.add(v);
+    } else {
+      const z = zoneOf(r[cL]); if (z) zones.add(z);
+    }
   }
   const sorted = Array.from(zones).sort();
   const saved = getSavedZones().map(z => z.toUpperCase());
@@ -877,20 +890,27 @@ function rebuildBinMap(){
   if (!BIN_WB) { BIN_MAP = {}; LOCATION_CODES = []; return; }
   const ws = BIN_WB.Sheets[$('binSheet').value];
   if (!ws) { BIN_MAP = {}; LOCATION_CODES = []; return; }
-  const fields = ['binColSku','binColLoc','binColQty','binColCode'];
+  const fields = ['binColSku','binColLoc','binColQty','binColCode','binColZone'];
   const headerOpt = fields.some(id => /^[A-Z]$/.test($(id).value||'')) ? 'A' : undefined;
   const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval:'' });
   const cS = $('binColSku').value, cQ = $('binColQty').value, cC = $('binColCode').value;
-  // NOTE: zone filter (binColLoc / binZones) is intentionally NOT applied here.
-  // We do a clean SKU × Location Code pivot of every row, summing Quantity —
-  // exactly like an Excel pivot table grouping Item No by Location Code.
+  const cZ = $('binColZone').value, cL = $('binColLoc').value;
+  // Zone filter: use Zone Code column when picked; fall back to extracting from Bin Code.
+  const allowed = new Set(Array.from($('binZones').selectedOptions).map(o => String(o.value).toUpperCase()));
   BIN_MAP = {};
   const allCodes = new Set();
-  let kept = 0;
+  let kept = 0, skipped = 0;
   for (const r of rows){
     const code = cC ? String(r[cC]==null?'':r[cC]).trim() : '';
     if (code) allCodes.add(code);
     const sku = cleanItem(r[cS]); if (!sku) continue;
+    // Determine the zone for this row
+    const rowZone = cZ
+      ? String(r[cZ]==null?'':r[cZ]).trim().toUpperCase()
+      : zoneOf(r[cL]);
+    // Apply filter only when the user has chosen at least one zone
+    if (allowed.size && rowZone && !allowed.has(rowZone)) { skipped++; continue; }
+    if (allowed.size && !rowZone) { skipped++; continue; } // unknown zone — skip when filter active
     const qty = cQ ? toNum(r[cQ]) : 0;
     let entry = BIN_MAP[sku];
     if (!entry){
@@ -904,13 +924,17 @@ function rebuildBinMap(){
     kept++;
   }
   LOCATION_CODES = Array.from(allCodes).sort();
-  log(`Bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows. Location codes: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
+  log(`Bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows (${skipped} skipped — zone not allowed). Location codes: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
   if (ORDERS.length) previewOrders();
 }
 
 for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
   $(id).addEventListener('change', () => { saveBinColPrefs(); rebuildBinMap(); });
 }
+$('binColZone').addEventListener('change', () => {
+  saveBinColPrefs();
+  populateBinZones(); // re-list zones from the new Zone Code column
+});
 $('binZones').addEventListener('change', () => { saveBinZones(); rebuildBinMap(); });
 
 function lookupBinEntry(localSku, ecom, rawSku){
