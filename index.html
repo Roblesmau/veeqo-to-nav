@@ -80,10 +80,11 @@
       </label>
       <label>Base URL</label>
       <select id="baseUrl">
-        <option value="https://api.veeqo.com">https://api.veeqo.com (direct)</option>
-        <option value="http://localhost:8787">http://localhost:8787 (local proxy)</option>
+        <option value="https://veeqo-to-nav-proxy.onrender.com">Production proxy (Render)</option>
+        <option value="http://localhost:8787">Local proxy (http://localhost:8787)</option>
+        <option value="https://api.veeqo.com">Direct (https://api.veeqo.com — CORS blocked)</option>
       </select>
-      <div class="hint">If direct calls fail with CORS, run the included <code>proxy.js</code> and switch to the proxy.</div>
+      <div class="hint">Default points at the Production proxy hosted on Render. Switch to "Local proxy" if you're running <code>node proxy.js</code> on your computer.</div>
     </fieldset>
 
     <fieldset>

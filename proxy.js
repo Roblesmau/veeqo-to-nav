@@ -9,7 +9,9 @@
 const http = require('http');
 const https = require('https');
 
-const PORT = 8787;
+// PORT comes from the hosting platform (Render/Railway/Fly set process.env.PORT).
+// Locally we fall back to 8787.
+const PORT = process.env.PORT || 8787;
 const TARGET = 'api.veeqo.com';
 
 http.createServer((req, res) => {
@@ -18,6 +20,12 @@ http.createServer((req, res) => {
   res.setHeader('Access-Control-Allow-Headers', 'x-api-key, content-type, accept');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+
+  // Health check (used by Render/Netlify uptime pings)
+  if (req.url === '/' || req.url === '/health'){
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    return res.end('Veeqo proxy OK');
+  }
 
   const opts = {
     host: TARGET,

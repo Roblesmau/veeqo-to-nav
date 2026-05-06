@@ -1,0 +1,12 @@
+{
+  "name": "veeqo-to-nav",
+  "version": "1.0.0",
+  "description": "Veeqo orders exporter with Items + Bin/Stock mapping for Nav.",
+  "main": "proxy.js",
+  "scripts": {
+    "start": "node proxy.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
