@@ -1,125 +1,95 @@
 # Deployment guide — share with non-technical users
 
-The app is **two pieces**:
-- `index.html` (the UI) → host on **Netlify**
-- `proxy.js` (CORS proxy for Veeqo API) → host on **Render**
+The whole app deploys to a **single Vercel project**:
+- `index.html` is served as a static file
+- `api/[...path].js` runs as a serverless function and proxies the Veeqo API
 
-After both are deployed, anyone with the Netlify URL can use the app — no install, no terminal.
-
----
-
-## Step 1 · Push the project to GitHub
-
-You need a GitHub repo to connect Netlify and Render to.
-
-1. Go to <https://github.com/new>, create a new **public** or **private** repo (e.g. `veeqo-to-nav`). Don't add README/license — leave it empty.
-2. Copy the repo URL (looks like `https://github.com/YOUR-USERNAME/veeqo-to-nav.git`).
-3. From the project folder, run:
-
-   ```bash
-   git remote add origin https://github.com/YOUR-USERNAME/veeqo-to-nav.git
-   git push -u origin main
-   ```
-
-GitHub may ask for credentials — use your GitHub username + a [Personal Access Token](https://github.com/settings/tokens?type=beta) as the password (not your real password).
+Same domain → no CORS, no separate proxy server, no second platform.
 
 ---
 
-## Step 2 · Deploy the proxy on Render (free)
+## Step 1 · Push to GitHub (already done)
 
-1. Sign up / log in at <https://render.com> (use your GitHub account — it makes step 3 easier).
-2. Click **New +** → **Web Service**.
-3. Connect your GitHub repo `veeqo-to-nav`.
-4. Fill in:
-   - **Name:** `veeqo-to-nav-proxy` (this becomes part of your URL)
-   - **Region:** closest to you
-   - **Branch:** `main`
-   - **Root Directory:** *(leave blank)*
-   - **Runtime:** Node
-   - **Build Command:** *(leave blank — no build step)*
-   - **Start Command:** `node proxy.js`
-   - **Instance Type:** **Free**
-5. Click **Create Web Service**.
-6. Wait ~2 min for the first deploy. When it's green ("Live"), copy the URL at the top — it'll look like:
+Repo: <https://github.com/Roblesmau/veeqo-to-nav>
 
-   ```
-   https://veeqo-to-nav-proxy.onrender.com
-   ```
-
-7. Open `https://veeqo-to-nav-proxy.onrender.com/health` in your browser. You should see `Veeqo proxy OK`.
-
-> ⚠️ **Free Render plan note:** the proxy goes to sleep after 15 min of no traffic. The first request after sleep takes ~30 sec to wake up. After that it's instant. For most uses (Mauricio fetching orders periodically) this is fine.
-
----
-
-## Step 3 · Match the proxy URL in `index.html`
-
-If your Render URL is different from `https://veeqo-to-nav-proxy.onrender.com`, edit the option in `index.html`:
-
-```html
-<option value="https://YOUR-RENDER-URL.onrender.com">Production proxy (Render)</option>
-```
-
-Then commit + push:
-
-```bash
-git add index.html
-git commit -m "Point production proxy at Render URL"
-git push
-```
-
----
-
-## Step 4 · Deploy the frontend on Netlify (free)
-
-1. Sign up / log in at <https://app.netlify.com> (use GitHub).
-2. Click **Add new site** → **Import an existing project**.
-3. Choose **GitHub** and pick your `veeqo-to-nav` repo.
-4. Settings:
-   - **Branch to deploy:** `main`
-   - **Build command:** *(leave blank)*
-   - **Publish directory:** `.`
-5. Click **Deploy**.
-6. ~30 sec later you'll get a URL like:
-
-   ```
-   https://yourname-veeqo-to-nav.netlify.app
-   ```
-
-7. (Optional) In **Site settings → Change site name**, give it a friendlier name like `de-veeqo-to-nav`.
-
----
-
-## Step 5 · Share it
-
-Send the recipient **just the Netlify URL**. That's it.
-
-The first time they open it:
-1. They paste their Veeqo API key in panel 1.
-2. Confirm Base URL is set to **Production proxy (Render)** (default).
-3. Click **Load stores**, pick stores.
-4. Upload Items and Bin/Stock files in panels 3 & 4 (these save to their browser, so they only do it once).
-5. Switch to **Orders** tab — orders auto-fetch and refresh every 5 min.
-
----
-
-## Updating the app later
-
-Whenever you change the code:
+If you make changes locally:
 
 ```bash
 git add .
-git commit -m "Describe what changed"
+git commit -m "Describe your change"
 git push
 ```
 
-Both Netlify and Render auto-redeploy on push. Recipients just refresh their browser to get the latest.
+Vercel auto-redeploys on every push to `main`.
+
+---
+
+## Step 2 · Deploy to Vercel (free)
+
+1. Sign up / log in at <https://vercel.com>. Use **Continue with GitHub** — it makes the repo connection automatic.
+2. From the dashboard click **Add New...** → **Project**.
+3. **Import Git Repository** → find `Roblesmau/veeqo-to-nav` → click **Import**.
+   - First time: Vercel will ask for permission to access GitHub repos. Click **Configure**, pick "Only select repositories", choose `veeqo-to-nav`, authorize.
+4. **Configure Project** screen — leave everything as detected:
+   - **Framework Preset:** Other (or "No framework")
+   - **Root Directory:** `./` (default)
+   - **Build Command:** *(leave blank — Vercel auto-detects from vercel.json)*
+   - **Output Directory:** *(leave blank)*
+   - **Install Command:** *(leave blank)*
+5. Click **Deploy**. ~30 seconds later you'll get a URL like:
+
+   ```
+   https://veeqo-to-nav.vercel.app
+   ```
+
+That's the URL you share. Done.
+
+---
+
+## Step 3 · Verify
+
+Open the deployed URL. The app should load instantly. Test:
+
+1. **Setup tab** → paste your Veeqo API key.
+2. Confirm **Base URL** is `Production proxy (Vercel — same origin)`.
+3. Click **Load stores** — if it lists your channels, the proxy is working.
+4. Open `https://veeqo-to-nav.vercel.app/api/channels` directly in another tab — should return a 401 with a clear error (because no API key was sent), confirming the proxy is alive.
+
+---
+
+## Step 4 · Share it
+
+Send the recipient **just the Vercel URL**. That's it. They:
+
+1. Paste their Veeqo API key in panel 1.
+2. Click **Load stores**, pick stores.
+3. Upload Items and Bin/Stock files in panels 3 & 4 (saved to their browser, one-time).
+4. Switch to **Orders** tab — orders auto-fetch and refresh every 5 min.
+
+Each recipient's API key, store selection, items file, and bin file live in their own browser — never shared, never on the server.
+
+---
+
+## Updating the app
+
+Whenever you push to `main`:
+
+```bash
+git add .
+git commit -m "Description"
+git push
+```
+
+Vercel detects the push and redeploys automatically (~30 sec). Recipients just refresh.
 
 ---
 
 ## Costs
 
-- **Netlify free tier:** 100 GB bandwidth/month — way more than you'll ever use.
-- **Render free tier:** 750 hr/month free for web services — also more than enough for one always-on proxy.
+- **Vercel Hobby (free):** 100 GB bandwidth/month, 100k serverless function invocations/month. More than enough for this use.
 
-Both are free for this use case.
+---
+
+## Local development still works
+
+The `proxy.js` file and `node proxy.js` workflow are unchanged for local testing. Just pick **"Local proxy (http://localhost:8787)"** from the Base URL dropdown when running locally.

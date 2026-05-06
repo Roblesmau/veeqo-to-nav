@@ -80,11 +80,11 @@
       </label>
       <label>Base URL</label>
       <select id="baseUrl">
-        <option value="https://veeqo-to-nav-proxy.onrender.com">Production proxy (Render)</option>
+        <option value="/api">Production proxy (Vercel — same origin)</option>
         <option value="http://localhost:8787">Local proxy (http://localhost:8787)</option>
         <option value="https://api.veeqo.com">Direct (https://api.veeqo.com — CORS blocked)</option>
       </select>
-      <div class="hint">Default points at the Production proxy hosted on Render. Switch to "Local proxy" if you're running <code>node proxy.js</code> on your computer.</div>
+      <div class="hint">Default uses the Vercel-hosted proxy at the same domain — no CORS. Switch to "Local proxy" if running <code>node proxy.js</code> locally.</div>
     </fieldset>
 
     <fieldset>
