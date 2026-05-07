@@ -1114,11 +1114,13 @@ function buildNavRows(){
       const lookupSku = m ? m.sku : '';
       const lookupUpc = m ? m.upc : '';
       const binEntry = lookupBinEntry(lookupSku, ecom, sku);
+      const qty = li ? (li.quantity ?? li.quantity_ordered ?? '') : '';
       const row = {
         'Sales Order': o.number || o.id,
         'ECNUMBER': ecom,
         'ITEM': lookupSku,
         'UPC': lookupUpc,
+        'QTY': qty,
       };
       for (const code of LOCATION_CODES){
         row[code] = (binEntry && binEntry.byCode && binEntry.byCode[code]) || '';
@@ -1141,7 +1143,7 @@ $('autoRefresh').addEventListener('change', () => {
 $('exportNavBtn').addEventListener('click', () => {
   if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
   const rows = buildNavRows();
-  const header = ['Sales Order','ECNUMBER','ITEM','UPC', ...LOCATION_CODES];
+  const header = ['Sales Order','ECNUMBER','ITEM','UPC','QTY', ...LOCATION_CODES];
   const ws = XLSX.utils.json_to_sheet(rows, { header });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Nav Export');
