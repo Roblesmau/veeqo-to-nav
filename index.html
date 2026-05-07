@@ -307,8 +307,7 @@ $('apiKey').addEventListener('change', savePrefs);
 $('remember').addEventListener('change', savePrefs);
 $('baseUrl').addEventListener('change', savePrefs);
 loadPrefs();
-// Pre-fill from message if empty
-if (!$('apiKey').value) $('apiKey').value = 'Vqt/87c1c3eafce70de66eceaef4c838eecf';
+// API key must be entered manually by the user — never hardcoded in source.
 
 // Default date filters to today
 (function initDates(){
