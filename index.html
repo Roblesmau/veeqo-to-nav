@@ -204,6 +204,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
+        <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
         <span class="pill" id="lastFetched" title="Time of the last successful fetch">Never fetched</span>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
           <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
@@ -1149,6 +1150,62 @@ $('exportNavBtn').addEventListener('click', () => {
   XLSX.utils.book_append_sheet(wb, ws, 'Nav Export');
   XLSX.writeFile(wb, `nav-export-${stamp()}.xlsx`);
   log(`Nav export: ${rows.length} rows downloaded.`, 'badge-ok');
+});
+
+// =========================================================
+// Nav SO export — Type | No. | Location Code | Quantity
+// Aggregates ordered qty per SKU across all orders, then allocates
+// against bin stock in priority order: BIN-ECAMZ -> BIN-VIN -> DE-MAIN.
+// DE-MAIN absorbs any remaining qty if BIN-ECAMZ + BIN-VIN run out.
+// =========================================================
+const NAV_SO_PRIORITY = ['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN'];
+
+function buildNavSORows(){
+  // 1. Sum ordered qty per local SKU across all orders
+  const orderedBySku = {};
+  for (const o of ORDERS){
+    for (const li of (o.line_items || [])){
+      const sv = li.sellable || li.product || {};
+      const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+      const ecom = ecomItem(rawSku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const localSku = m ? m.sku : '';
+      if (!localSku) continue; // skip unmapped — no SKU to allocate
+      const qty = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+      if (!qty) continue;
+      orderedBySku[localSku] = (orderedBySku[localSku] || 0) + qty;
+    }
+  }
+  // 2. Allocate by priority: BIN-ECAMZ -> BIN-VIN -> DE-MAIN
+  const rows = [];
+  for (const sku of Object.keys(orderedBySku).sort()){
+    let needed = orderedBySku[sku];
+    const binEntry = BIN_MAP[cleanItem(sku)] || null;
+    for (let i = 0; i < NAV_SO_PRIORITY.length; i++){
+      if (needed <= 0) break;
+      const code = NAV_SO_PRIORITY[i];
+      const isLast = i === NAV_SO_PRIORITY.length - 1;
+      const available = (binEntry && binEntry.byCode && Number(binEntry.byCode[code])) || 0;
+      const take = isLast ? needed : Math.min(needed, available);
+      if (take > 0){
+        rows.push({ Type: 'Item', 'No.': sku, 'Location Code': code, Quantity: take });
+        needed -= take;
+      }
+    }
+  }
+  return rows;
+}
+
+$('exportNavSOBtn').addEventListener('click', () => {
+  if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
+  const rows = buildNavSORows();
+  if (!rows.length){ alert('Nothing to export — no mapped SKUs in the current orders.'); return; }
+  const header = ['Type','No.','Location Code','Quantity'];
+  const ws = XLSX.utils.json_to_sheet(rows, { header });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Nav SO');
+  XLSX.writeFile(wb, `nav-so-${stamp()}.xlsx`);
+  log(`Nav SO export: ${rows.length} allocation rows downloaded (priority BIN-ECAMZ → BIN-VIN → DE-MAIN).`, 'badge-ok');
 });
 
 </script>
