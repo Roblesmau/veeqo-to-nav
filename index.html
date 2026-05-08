@@ -114,7 +114,7 @@
       <select id="stores" multiple size="6"></select>
       <div class="hint">Hold Ctrl/Cmd to select multiple. Empty = all stores.</div>
       <div class="row">
-        <div><label>Page size</label><input id="pageSize" type="number" value="50" min="1" max="100"/></div>
+        <div><label>Page size</label><input id="pageSize" type="number" value="100" min="1" max="100"/></div>
         <div><label>Max pages</label><input id="maxPages" type="number" value="20" min="1" max="200"/></div>
       </div>
       <label>Search query (optional)</label>
@@ -310,12 +310,13 @@ $('baseUrl').addEventListener('change', savePrefs);
 loadPrefs();
 // API key must be entered manually by the user — never hardcoded in source.
 
-// Default date filters to today
+// Default date filters: from = yesterday, to = today
 (function initDates(){
+  const fmt = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   const today = new Date();
-  const iso = today.getFullYear()+'-'+String(today.getMonth()+1).padStart(2,'0')+'-'+String(today.getDate()).padStart(2,'0');
-  if (!$('fromDate').value) $('fromDate').value = iso;
-  if (!$('toDate').value) $('toDate').value = iso;
+  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+  if (!$('fromDate').value) $('fromDate').value = fmt(yesterday);
+  if (!$('toDate').value) $('toDate').value = fmt(today);
 })();
 
 // Warn if opened via file:// (CORS will silently kill direct API calls)
