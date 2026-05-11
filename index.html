@@ -5,12 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Veeqo → Nav: Orders Exporter</title>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+  // Apply saved theme immediately so there's no light->dark flash on load.
+  (function(){
+    try {
+      const t = localStorage.getItem('veeqo_to_nav_theme') || 'dark';
+      document.documentElement.dataset.theme = t;
+    } catch {}
+  })();
+</script>
 <style>
   :root {
     --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --line:#2a2f3a;
     --text:#e6e8ef; --muted:#9aa3b2; --accent:#5b8cff; --accent2:#3ad29f;
     --warn:#f5a524; --err:#ff6b6b;
   }
+  html[data-theme="light"] {
+    --bg:#f5f6f8; --panel:#ffffff; --panel2:#eef0f4; --line:#d9dde4;
+    --text:#1a1d24; --muted:#5c6573; --accent:#3e63dd; --accent2:#1f9f6e;
+    --warn:#b15f08; --err:#c2363b;
+  }
+  html[data-theme="light"] tr:hover td{background:rgba(62,99,221,.06)}
+  html[data-theme="light"] .log{background:#f0f2f6}
+  .theme-toggle{background:transparent;border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:4px 10px;width:auto;font-size:12px;cursor:pointer}
+  .theme-toggle:hover{color:var(--text);border-color:var(--accent)}
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.45 system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:var(--text)}
   header{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:12px}
@@ -65,6 +83,8 @@
 <header>
   <h1>Veeqo → Nav</h1>
   <span class="sub">Fetch orders · merge with UPC / local SKU mapping · export</span>
+  <span style="flex:1"></span>
+  <button id="themeToggle" class="theme-toggle" title="Toggle light / dark theme">🌙 Dark</button>
 </header>
 <div class="tabs" role="tablist">
   <button class="tab-btn active" data-tab="setup" role="tab">Setup</button>
@@ -245,6 +265,21 @@
 
 <script>
 const $ = id => document.getElementById(id);
+
+// --- theme toggle ---
+function syncThemeLabel(){
+  const t = document.documentElement.dataset.theme || 'dark';
+  const btn = $('themeToggle'); if (!btn) return;
+  btn.textContent = t === 'light' ? '☀️ Light' : '🌙 Dark';
+}
+syncThemeLabel();
+$('themeToggle').addEventListener('click', () => {
+  const cur = document.documentElement.dataset.theme || 'dark';
+  const next = cur === 'light' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('veeqo_to_nav_theme', next); } catch {}
+  syncThemeLabel();
+});
 
 // --- tabs ---
 let autoFetchTimer = null;
