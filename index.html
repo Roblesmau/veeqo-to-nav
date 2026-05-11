@@ -49,6 +49,9 @@
   .tab-panel.active{display:block}
   .veeqo-link{display:inline-block;padding:3px 8px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);background:transparent;text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
   .veeqo-link:hover{background:var(--accent);color:#fff}
+  /* Shared-state pills — green when synced, orange when not */
+  .share-ok{background:rgba(58,210,159,.14);color:var(--accent2);border-color:var(--accent2);font-weight:600}
+  .share-warn{background:rgba(245,165,36,.16);color:var(--warn);border-color:var(--warn);font-weight:600}
   .row-insufficient td{background:rgba(255,107,107,.10);border-left:2px solid var(--err)}
   html[data-theme="light"] .row-insufficient td{background:rgba(194,54,59,.08)}
   th.sortable{cursor:pointer;user-select:none}
@@ -458,9 +461,15 @@ function relativeTime(iso){
 }
 function setLastUpdated(elId, meta){
   const el = $(elId); if (!el) return;
-  if (!meta){ el.textContent = 'Not yet shared'; el.title = ''; return; }
-  el.textContent = `Updated ${relativeTime(meta.updated_at)} by ${meta.updated_by || 'Anonymous'}`;
+  if (!meta){
+    el.textContent = '⚠ Not yet shared';
+    el.title = 'Upload this file to share it with the team';
+    el.className = 'pill share-warn';
+    return;
+  }
+  el.textContent = `✓ Updated ${relativeTime(meta.updated_at)} by ${meta.updated_by || 'Anonymous'}`;
   el.title = `${new Date(meta.updated_at).toLocaleString()} — by ${meta.updated_by || 'Anonymous'}`;
+  el.className = 'pill share-ok';
 }
 
 async function sbSaveSetting(key, value){
