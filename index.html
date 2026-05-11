@@ -593,7 +593,7 @@ function previewOrders(){
         ${codeCells}
         <td>${esc(o.status||'')}</td>
         <td>${esc(o.created_at||'')}</td>
-        <td>${veeqoLinkBtn(o.id)}</td>
+        <td>${veeqoLinkBtn(o.number || o.id)}</td>
       </tr>`);
       if (++count >= 1000) break;
     }
@@ -1093,7 +1093,7 @@ function renderResult(){
   const filter = $('filterText').value.toLowerCase();
   const rows = RESULT.filter(r => !filter || cols.some(c => String(r[c]).toLowerCase().includes(filter)));
   $('resultBody').innerHTML = rows.slice(0,2000).map(r =>
-    `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_id)}</td></tr>`
+    `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_number)}</td></tr>`
   ).join('');
 }
 $('filterText').addEventListener('input', () => {
@@ -1111,13 +1111,55 @@ $('clearFilterBtn').addEventListener('click', () => {
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
 // Render a "Buy label" link button for an order. Veeqo's orders list
-// has client-side-only search (URL doesn't update), so we open the
-// order's detail page directly via its numeric id — that page also
-// has Veeqo's "Buy label" action.
-function veeqoLinkBtn(orderId){
-  if (!orderId) return '';
-  const url = `https://app.veeqo.com/orders/${encodeURIComponent(orderId)}`;
-  return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="veeqo-link" title="Open this order in Veeqo (new tab) to buy the label">Buy label ↗</a>`;
+// search is client-side only (no URL filter available), so we instead:
+//   1) copy the order number to the clipboard, and
+//   2) open Veeqo's orders list page in a new tab.
+// The user then pastes (Ctrl+V) into Veeqo's search bar — one row, Buy
+// label visible. Both halves happen in a single click.
+function veeqoLinkBtn(orderNumber){
+  if (!orderNumber) return '';
+  const numEsc = String(orderNumber).replace(/'/g, "\\'");
+  return `<button class="veeqo-link" onclick="openVeeqoBuyLabel('${numEsc}')" title="Copies order # to clipboard and opens Veeqo orders list — paste (Ctrl+V) into the Veeqo search bar.">Buy label ↗</button>`;
+}
+
+// Click handler for the Buy label button.
+window.openVeeqoBuyLabel = function(orderNumber){
+  // Copy first (must run synchronously within the click handler so the
+  // clipboard write is allowed by the browser).
+  let copyOk = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(orderNumber);
+      copyOk = true;
+    } else {
+      // Fallback for older browsers
+      const ta = document.createElement('textarea');
+      ta.value = orderNumber; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+      copyOk = true;
+    }
+  } catch (e) { copyOk = false; }
+  // Open Veeqo orders list in a new tab
+  window.open('https://app.veeqo.com/orders', '_blank', 'noopener,noreferrer');
+  // Toast
+  showToast(copyOk
+    ? `Order ${orderNumber} copied — paste it into Veeqo's search bar (Ctrl+V).`
+    : `Open Veeqo and search for ${orderNumber}.`);
+};
+
+function showToast(msg){
+  let toast = document.getElementById('appToast');
+  if (!toast){
+    toast = document.createElement('div');
+    toast.id = 'appToast';
+    toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--panel);color:var(--text);padding:12px 16px;border:1px solid var(--accent);border-radius:8px;font-size:13px;z-index:9999;box-shadow:0 6px 20px rgba(0,0,0,.35);max-width:340px;line-height:1.4;transition:opacity .35s';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.opacity = '1';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { toast.style.opacity = '0'; }, 4500);
 }
 
 // =========================================================
