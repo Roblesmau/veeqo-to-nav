@@ -905,13 +905,52 @@ $('mapFile').addEventListener('change', async e => {
   loadWorkbookFromBuffer(buf, f.name);
   try {
     await idbSave('mapping', { name: f.name, savedAt: new Date().toISOString(), data: buf });
-    log(`Mapping file "${f.name}" saved to browser storage.`, 'badge-ok');
+    log(`Mapping file "${f.name}" saved to browser storage (full ${(buf.byteLength/1024/1024).toFixed(1)} MB).`, 'badge-ok');
   } catch (err) {
     log(`Could not persist mapping file: ${err.message}`, 'badge-warn');
   }
-  // Share with team via Supabase
-  await sbUploadFile('items', f);
+  // Share a SLIM 3-column version with the team via Supabase
+  scheduleSlimItemsUpload(f.name);
 });
+
+// Build & upload a 3-column slim version of the Items file (Local SKU / Ecom SKU / UPC)
+// instead of the full 28-column workbook. Much smaller — fits inside Supabase's free
+// 50 MB-per-file cap and downloads faster for everyone on the team.
+let _slimItemsTimer = null;
+function scheduleSlimItemsUpload(srcName){
+  clearTimeout(_slimItemsTimer);
+  _slimItemsTimer = setTimeout(() => uploadSlimItemsToSupabase(srcName), 1200);
+}
+
+async function uploadSlimItemsToSupabase(srcName){
+  if (!sb || !MAP_WB){ return; }
+  const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
+  if (!cI || !cU || !cS){
+    log('Team share skipped: pick the three Items columns first.', 'badge-warn');
+    return;
+  }
+  const ws = MAP_WB.Sheets[$('mapSheet').value]; if (!ws){ return; }
+  const headerOpt = /^[A-Z]$/.test(cI) || /^[A-Z]$/.test(cU) || /^[A-Z]$/.test(cS) ? 'A' : undefined;
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval: '' });
+  const slim = [];
+  for (const r of rows){
+    const sku  = String(r[cS] == null ? '' : r[cS]).trim();
+    const ecom = String(r[cI] == null ? '' : r[cI]).trim();
+    const upc  = String(r[cU] == null ? '' : r[cU]).trim();
+    if (!sku && !ecom && !upc) continue;
+    slim.push({ 'Local SKU': sku, 'Ecom SKU': ecom, 'UPC': upc });
+  }
+  // Build a fresh xlsx with stable 3-column headers
+  const newWs = XLSX.utils.json_to_sheet(slim, { header: ['Local SKU','Ecom SKU','UPC'] });
+  const newWb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(newWb, newWs, 'Items');
+  const buf = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
+  const slimName = (srcName || 'items') + ' (slim 3-col).xlsx';
+  const slimFile = new File([buf], slimName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const sizeMb = (buf.byteLength / 1024 / 1024).toFixed(2);
+  log(`Sharing slim items (${slim.length.toLocaleString()} rows, ${sizeMb} MB) with the team…`);
+  await sbUploadFile('items', slimFile);
+}
 
 $('clearMapBtn').addEventListener('click', async () => {
   await idbClear('mapping');
@@ -1040,7 +1079,12 @@ function saveMapColPrefs(){
   } catch {}
 }
 for (const id of ['colItem','colUpc','colSku']){
-  $(id).addEventListener('change', () => { saveMapColPrefs(); rebuildMapping(); });
+  $(id).addEventListener('change', () => {
+    saveMapColPrefs();
+    rebuildMapping();
+    // Column choice changed → re-share the slim version so teammates use the same fields
+    scheduleSlimItemsUpload();
+  });
 }
 
 // =========================================================
