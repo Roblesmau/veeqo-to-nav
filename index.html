@@ -593,7 +593,7 @@ function previewOrders(){
         ${codeCells}
         <td>${esc(o.status||'')}</td>
         <td>${esc(o.created_at||'')}</td>
-        <td>${veeqoLinkBtn(o.number || o.id)}</td>
+        <td>${veeqoLinkBtn(o.id)}</td>
       </tr>`);
       if (++count >= 1000) break;
     }
@@ -1093,7 +1093,7 @@ function renderResult(){
   const filter = $('filterText').value.toLowerCase();
   const rows = RESULT.filter(r => !filter || cols.some(c => String(r[c]).toLowerCase().includes(filter)));
   $('resultBody').innerHTML = rows.slice(0,2000).map(r =>
-    `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_number)}</td></tr>`
+    `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_id)}</td></tr>`
   ).join('');
 }
 $('filterText').addEventListener('input', () => {
@@ -1110,13 +1110,14 @@ $('clearFilterBtn').addEventListener('click', () => {
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
-// Render a "Buy label" link button for an order. Opens Veeqo's orders
-// LIST view in a new tab with the order number pre-filtered in the
-// search box, so the row with the Buy label action is visible immediately.
-function veeqoLinkBtn(orderNumber){
-  if (!orderNumber) return '';
-  const url = `https://app.veeqo.com/orders?query=${encodeURIComponent(orderNumber)}`;
-  return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="veeqo-link" title="Open Veeqo orders list filtered by this order (new tab)">Buy label ↗</a>`;
+// Render a "Buy label" link button for an order. Veeqo's orders list
+// has client-side-only search (URL doesn't update), so we open the
+// order's detail page directly via its numeric id — that page also
+// has Veeqo's "Buy label" action.
+function veeqoLinkBtn(orderId){
+  if (!orderId) return '';
+  const url = `https://app.veeqo.com/orders/${encodeURIComponent(orderId)}`;
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="veeqo-link" title="Open this order in Veeqo (new tab) to buy the label">Buy label ↗</a>`;
 }
 
 // =========================================================
