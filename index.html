@@ -310,12 +310,12 @@ $('baseUrl').addEventListener('change', savePrefs);
 loadPrefs();
 // API key must be entered manually by the user — never hardcoded in source.
 
-// Default date filters: from = yesterday, to = today
+// Default date filters: 7-day rolling window (from = 7 days ago, to = today)
 (function initDates(){
   const fmt = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
   const today = new Date();
-  const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
-  if (!$('fromDate').value) $('fromDate').value = fmt(yesterday);
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+  if (!$('fromDate').value) $('fromDate').value = fmt(weekAgo);
   if (!$('toDate').value) $('toDate').value = fmt(today);
 })();
 
