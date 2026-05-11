@@ -44,8 +44,13 @@
   .tab-btn.active{background:var(--bg);color:var(--text);border-color:var(--line)}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
-  .veeqo-link{display:inline-block;padding:3px 8px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap}
+  .veeqo-link{display:inline-block;padding:3px 8px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);background:transparent;text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
   .veeqo-link:hover{background:var(--accent);color:#fff}
+  .row-insufficient td{background:rgba(255,107,107,.10);border-left:2px solid var(--err)}
+  html[data-theme="light"] .row-insufficient td{background:rgba(194,54,59,.08)}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--accent)}
+  th .sort-arrow{display:inline-block;margin-left:4px;color:var(--accent);font-size:10px}
   .stat-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 18px;min-width:170px}
   .stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
   .stat-value{font-size:28px;font-weight:700;margin-top:2px;color:var(--accent2)}
@@ -231,6 +236,10 @@
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
           <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
         </label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="Show only rows where ordered Qty exceeds the total stock across all locations">
+          <input id="insufficientOnly" type="checkbox" style="width:auto"/> Insufficient stock only
+        </label>
+        <button id="copySelectedBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400" disabled title="Copy the order numbers of all checked rows to your clipboard">Copy selected (0)</button>
         <span class="grow"></span>
         <input id="filterText" placeholder="Filter Order / Customer / Ecom Item / SKU / UPC..." style="max-width:300px" title="Type any text — rows where Order, Customer, Ecom Item, SKU, or UPC contain the text will be shown."/>
         <button id="clearFilterBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400">Clear filter</button>
@@ -478,6 +487,9 @@ $('fetchBtn').addEventListener('click', async () => {
     log(`Done. ${ORDERS.length} orders fetched.`, 'badge-ok');
     const now = new Date();
     if ($('lastFetched')) $('lastFetched').textContent = `Last fetched: ${now.toLocaleTimeString()}`;
+    // Prune stale selections (orders no longer in the fetched set)
+    const visibleNums = new Set(ORDERS.map(o => o.number || o.id || ''));
+    for (const n of [...SELECTED_ORDERS]) if (!visibleNums.has(n)) SELECTED_ORDERS.delete(n);
     updateOrderStats();
     previewOrders();
   } catch (e){
@@ -542,65 +554,155 @@ function ecomItemsOf(o){
   return seen.join(' | ');
 }
 
+// Sort + select state for the live preview table
+let SORT_COL = '';
+let SORT_DIR = 'asc';
+const SELECTED_ORDERS = new Set();
+
 function previewOrders(){
-  const cols = ['Order','Customer','Ship from','Delivery','Item','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES, 'Status','Created','Action'];
-  $('resultHead').innerHTML = cols.map(h=>`<th>${h}</th>`).join('');
-  const out = [];
-  let count = 0;
-  const filter = ($('filterText') ? $('filterText').value : '').trim().toLowerCase();
-  for (const o of ORDERS){
+  const cols = ['Order','Customer','Ship from','Delivery','Item','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES, 'Status','Created'];
+
+  // 1. Build flat rows. Sort by created_at ascending first so cumulative
+  // demand is computed in the right order (oldest order eats stock first).
+  const sortedOrders = [...ORDERS].sort((a, b) => String(a.created_at||'').localeCompare(String(b.created_at||'')));
+  const cumDemand = {}; // demandKey -> qty used so far across earlier rows
+  const flat = [];
+  for (const o of sortedOrders){
     const lis = o.line_items || [];
     const cust = customerOf(o), shipFrom = shipFromOf(o), del = deliveryOf(o);
     const list = lis.length ? lis : [null];
     for (const li of list){
       const sv = (li && (li.sellable || li.product)) || {};
-      const sku = sv.sku_code || sv.sku || (li && (li.sku_code || li.sku)) || '';
+      const rawSku = sv.sku_code || sv.sku || (li && (li.sku_code || li.sku)) || '';
       const title = sv.product_title || (li && li.title) || '';
-      const qty = li ? (li.quantity ?? li.quantity_ordered ?? '') : '';
-      const itemCell = sku ? `${sku}${title?` — ${title}`:''}` : '';
-      const ecom = ecomItem(sku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(sku)] || null;
+      const qty = Number(li ? (li.quantity ?? li.quantity_ordered ?? 0) : 0) || 0;
+      const itemCell = rawSku ? `${rawSku}${title?` — ${title}`:''}` : '';
+      const ecom = ecomItem(rawSku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
       const lookupSku = m ? m.sku : '';
-      // Filter: match against Order, Customer, Ecom Item, SKU (lookup or raw), UPC
-      if (filter){
-        const lookupUpcCheck = m ? m.upc : '';
-        const haystack = [
-          o.number || o.id || '',
-          cust,
-          ecom,
-          lookupSku,
-          sku,
-          lookupUpcCheck
-        ].join(' ').toLowerCase();
-        if (!haystack.includes(filter)) continue;
-      }
       const lookupUpc = m ? m.upc : '';
-      const binEntry = lookupBinEntry(lookupSku, ecom, sku);
-      const codeCells = LOCATION_CODES.map(code => {
-        const v = binEntry && binEntry.byCode && binEntry.byCode[code];
-        return `<td${!v?' class="muted"':''}>${esc(v == null || v === 0 ? '' : v)}</td>`;
-      }).join('');
-      out.push(`<tr>
-        <td>${esc(o.number||o.id)}</td>
-        <td>${esc(cust)}</td>
-        <td>${esc(shipFrom)}</td>
-        <td>${esc(del)}</td>
-        <td>${esc(itemCell)}</td>
-        <td>${esc(ecom)}</td>
-        <td${!lookupSku?' class="badge-warn"':''}>${esc(lookupSku)}</td>
-        <td${!lookupUpc?' class="badge-warn"':''}>${esc(lookupUpc)}</td>
-        <td>${esc(qty)}</td>
-        ${codeCells}
-        <td>${esc(o.status||'')}</td>
-        <td>${esc(o.created_at||'')}</td>
-        <td>${veeqoLinkBtn(o.number || o.id)}</td>
-      </tr>`);
-      if (++count >= 1000) break;
+      const binEntry = lookupBinEntry(lookupSku, ecom, rawSku);
+      const codeVals = {};
+      let totalAvail = 0;
+      for (const code of LOCATION_CODES){
+        const v = (binEntry && binEntry.byCode && Number(binEntry.byCode[code])) || 0;
+        codeVals[code] = v;
+        totalAvail += v;
+      }
+      // Cumulative demand for insufficient detection.
+      const demandKey = cleanItem(lookupSku) || cleanItem(rawSku) || cleanItem(ecom);
+      const usedBefore = cumDemand[demandKey] || 0;
+      cumDemand[demandKey] = usedBefore + qty;
+      const insufficient = demandKey ? (usedBefore + qty) > totalAvail : false;
+      flat.push({
+        orderNumber: o.number || o.id || '',
+        cust, shipFrom, del,
+        itemCell, ecom, rawSku, lookupSku, lookupUpc,
+        qty, codeVals, totalAvail,
+        status: o.status || '',
+        created: o.created_at || '',
+        insufficient,
+      });
     }
-    if (count >= 1000) break;
   }
-  const rows = out.join('');
-  $('resultBody').innerHTML = rows;
+
+  // 2. Apply text filter
+  const filter = ($('filterText') ? $('filterText').value : '').trim().toLowerCase();
+  let filtered = flat;
+  if (filter){
+    filtered = filtered.filter(r => {
+      const hay = [r.orderNumber, r.cust, r.ecom, r.lookupSku, r.rawSku, r.lookupUpc].join(' ').toLowerCase();
+      return hay.includes(filter);
+    });
+  }
+
+  // 3. Apply "insufficient stock only" toggle
+  if ($('insufficientOnly') && $('insufficientOnly').checked){
+    filtered = filtered.filter(r => r.insufficient);
+  }
+
+  // 4. Apply sort
+  if (SORT_COL){
+    const dir = SORT_DIR === 'asc' ? 1 : -1;
+    filtered.sort((a, b) => {
+      const av = sortValueForCol(a, SORT_COL);
+      const bv = sortValueForCol(b, SORT_COL);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+  }
+
+  // 5. Render header (with select-all + sort indicators)
+  const arrow = (col) => SORT_COL === col ? `<span class="sort-arrow">${SORT_DIR === 'asc' ? '▲' : '▼'}</span>` : '';
+  const headerHtml = `<th style="width:28px"><input type="checkbox" id="selectAll" style="width:auto" title="Select all visible rows"/></th>` +
+    cols.map(h => `<th class="sortable" data-col="${esc(h)}">${esc(h)}${arrow(h)}</th>`).join('') +
+    `<th>Action</th>`;
+  $('resultHead').innerHTML = headerHtml;
+
+  // 6. Render body (cap at 1000 rows for performance)
+  const rendered = filtered.slice(0, 1000);
+  const out = rendered.map(r => {
+    const codeCells = LOCATION_CODES.map(code => {
+      const v = r.codeVals[code] || 0;
+      return `<td${!v?' class="muted"':''}>${v===0?'':v}</td>`;
+    }).join('');
+    const checked = SELECTED_ORDERS.has(r.orderNumber) ? ' checked' : '';
+    return `<tr${r.insufficient ? ' class="row-insufficient"' : ''}>
+      <td><input type="checkbox" class="row-select" data-order="${esc(r.orderNumber)}" style="width:auto"${checked}/></td>
+      <td>${esc(r.orderNumber)}</td>
+      <td>${esc(r.cust)}</td>
+      <td>${esc(r.shipFrom)}</td>
+      <td>${esc(r.del)}</td>
+      <td>${esc(r.itemCell)}</td>
+      <td>${esc(r.ecom)}</td>
+      <td${!r.lookupSku?' class="badge-warn"':''}>${esc(r.lookupSku)}</td>
+      <td${!r.lookupUpc?' class="badge-warn"':''}>${esc(r.lookupUpc)}</td>
+      <td>${r.qty}</td>
+      ${codeCells}
+      <td>${esc(r.status)}</td>
+      <td>${esc(r.created)}</td>
+      <td>${veeqoLinkBtn(r.orderNumber)}</td>
+    </tr>`;
+  }).join('');
+  $('resultBody').innerHTML = out;
+
+  updateBulkActionUI();
+}
+
+function sortValueForCol(r, col){
+  if (LOCATION_CODES.includes(col)) return r.codeVals[col] || 0;
+  switch (col){
+    case 'Order':     return String(r.orderNumber).toLowerCase();
+    case 'Customer':  return String(r.cust).toLowerCase();
+    case 'Ship from': return String(r.shipFrom).toLowerCase();
+    case 'Delivery':  return String(r.del).toLowerCase();
+    case 'Item':      return String(r.itemCell).toLowerCase();
+    case 'Ecom Item': return String(r.ecom).toLowerCase();
+    case 'SKU':       return String(r.lookupSku).toLowerCase();
+    case 'UPC':       return String(r.lookupUpc).toLowerCase();
+    case 'Qty':       return r.qty;
+    case 'Status':    return String(r.status).toLowerCase();
+    case 'Created':   return String(r.created);
+    default:          return '';
+  }
+}
+
+function updateBulkActionUI(){
+  const btn = $('copySelectedBtn');
+  if (!btn) return;
+  const n = SELECTED_ORDERS.size;
+  btn.textContent = `Copy selected (${n})`;
+  btn.disabled = n === 0;
+  // Sync select-all checkbox state with visible rows
+  const all = document.querySelectorAll('#resultBody .row-select');
+  const selectAll = $('selectAll');
+  if (selectAll && all.length){
+    const allChecked = Array.from(all).every(cb => cb.checked);
+    const someChecked = Array.from(all).some(cb => cb.checked);
+    selectAll.checked = allChecked;
+    selectAll.indeterminate = !allChecked && someChecked;
+  }
 }
 
 // =========================================================
@@ -1106,6 +1208,56 @@ $('clearFilterBtn').addEventListener('click', () => {
   $('filterText').value = '';
   if (RESULT.length) renderResult();
   if (ORDERS.length) previewOrders();
+});
+
+// Insufficient-stock-only toggle re-renders the preview
+$('insufficientOnly').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
+
+// Sortable header clicks — toggle direction or pick new column
+document.getElementById('resultHead').addEventListener('click', (e) => {
+  const th = e.target.closest('th.sortable'); if (!th) return;
+  const col = th.dataset.col;
+  if (SORT_COL === col){ SORT_DIR = SORT_DIR === 'asc' ? 'desc' : 'asc'; }
+  else { SORT_COL = col; SORT_DIR = 'asc'; }
+  if (ORDERS.length) previewOrders();
+});
+
+// Row checkboxes + select-all (event delegation)
+document.getElementById('resultBody').addEventListener('change', (e) => {
+  const cb = e.target.closest('input.row-select'); if (!cb) return;
+  const orderNum = cb.dataset.order;
+  if (cb.checked) SELECTED_ORDERS.add(orderNum);
+  else SELECTED_ORDERS.delete(orderNum);
+  updateBulkActionUI();
+});
+document.getElementById('resultHead').addEventListener('change', (e) => {
+  if (e.target.id !== 'selectAll') return;
+  const visible = document.querySelectorAll('#resultBody .row-select');
+  visible.forEach(cb => {
+    cb.checked = e.target.checked;
+    const orderNum = cb.dataset.order;
+    if (e.target.checked) SELECTED_ORDERS.add(orderNum);
+    else SELECTED_ORDERS.delete(orderNum);
+  });
+  updateBulkActionUI();
+});
+
+// Bulk copy — selected order numbers to clipboard, one per line
+$('copySelectedBtn').addEventListener('click', () => {
+  if (!SELECTED_ORDERS.size) return;
+  const list = Array.from(SELECTED_ORDERS).join('\n');
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(list); ok = true;
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = list; document.body.appendChild(ta);
+      ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta); ok = true;
+    }
+  } catch {}
+  showToast(ok ? `${SELECTED_ORDERS.size} order number(s) copied to clipboard.` : 'Copy failed — try selecting and copying manually.');
 });
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
