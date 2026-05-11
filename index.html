@@ -1215,6 +1215,15 @@ $('clearFilterBtn').addEventListener('click', () => {
 // Insufficient-stock-only toggle re-renders the preview
 $('insufficientOnly').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
 
+// Filter input: pressing Enter (typical end-of-scan signal from a barcode
+// scanner) selects all the text so the next scan replaces it cleanly.
+$('filterText').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter'){
+    e.preventDefault();
+    e.target.select();
+  }
+});
+
 // Sortable header clicks — toggle direction or pick new column
 document.getElementById('resultHead').addEventListener('click', (e) => {
   const th = e.target.closest('th.sortable'); if (!th) return;
