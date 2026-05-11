@@ -7,6 +7,7 @@
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
 <link rel="apple-touch-icon" href="/favicon.svg"/>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script>
   // Apply saved theme immediately so there's no light->dark flash on load.
   (function(){
@@ -91,6 +92,7 @@
   <h1>Veeqo → Nav</h1>
   <span class="sub">Fetch orders · merge with UPC / local SKU mapping · export</span>
   <span style="flex:1"></span>
+  <button id="userNameBtn" class="theme-toggle" title="Your display name on shared updates (click to change)">👤 ...</button>
   <button id="themeToggle" class="theme-toggle" title="Toggle light / dark theme">🌙 Dark</button>
 </header>
 <div class="tabs" role="tablist">
@@ -118,6 +120,7 @@
 
     <fieldset>
       <legend>2 · Filters</legend>
+      <div style="display:flex;justify-content:flex-end"><span class="pill" id="filtersLastUpdated" style="font-size:10px">Loading…</span></div>
       <div class="row">
         <div><label>Created from</label><input id="fromDate" type="date"/></div>
         <div><label>Created to</label><input id="toDate" type="date"/></div>
@@ -153,6 +156,7 @@
 
     <fieldset>
       <legend>3 · Items file (Excel)</legend>
+      <div style="display:flex;justify-content:flex-end"><span class="pill" id="itemsLastUpdated" style="font-size:10px">Loading…</span></div>
       <input id="mapFile" type="file" accept=".xlsx,.xls,.csv"/>
       <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -181,6 +185,7 @@
 
     <fieldset>
       <legend>4 · Bin / Stock file (Excel)</legend>
+      <div style="display:flex;justify-content:flex-end"><span class="pill" id="binLastUpdated" style="font-size:10px">Loading…</span></div>
       <input id="binFile" type="file" accept=".xlsx,.xls,.csv"/>
       <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -367,6 +372,45 @@ loadPrefs();
   if (!$('toDate').value) $('toDate').value = fmt(today);
 })();
 
+// ============================================================
+// Shared filter settings (panel 2) — saved to Supabase
+// Fields shared across team: status, query, pageSize, maxPages, stores.
+// NOT shared: date range (rolling per-user) + API key (private per-user).
+// ============================================================
+const SHARED_FILTER_IDS = ['status','query','pageSize','maxPages'];
+
+function applySharedFilters(map){
+  const f = map.filters;
+  if (f && f.value){
+    for (const id of SHARED_FILTER_IDS){
+      if (f.value[id] != null && $(id)) $(id).value = f.value[id];
+    }
+  }
+  setLastUpdated('filtersLastUpdated', f || null);
+}
+function applySharedStores(map){
+  // Selection applied after stores list is loaded — see loadStores().
+  return (map.stores && Array.isArray(map.stores.value)) ? map.stores.value : null;
+}
+async function saveFiltersToSupabase(){
+  if (!sb) return;
+  const value = {};
+  for (const id of SHARED_FILTER_IDS) if ($(id)) value[id] = $(id).value;
+  const row = await sbSaveSetting('filters', value);
+  if (row) setLastUpdated('filtersLastUpdated', row);
+}
+async function saveStoresToSupabase(){
+  if (!sb) return;
+  const ids = Array.from($('stores').selectedOptions).map(o => o.value);
+  await sbSaveSetting('stores', ids);
+}
+
+// Hook filter inputs (panel 2) — write to Supabase on change
+for (const id of SHARED_FILTER_IDS){
+  if ($(id)) $(id).addEventListener('change', () => saveFiltersToSupabase());
+}
+$('stores').addEventListener('change', () => saveStoresToSupabase());
+
 // Warn if opened via file:// (CORS will silently kill direct API calls)
 if (location.protocol === 'file:') {
   log('Page opened via file:// — browsers often block API calls from file URLs. Serve via http://localhost (run "npx serve .") or use the proxy.', 'badge-warn');
@@ -380,6 +424,93 @@ let RESULT = [];        // merged rows for export
 let BIN_WB = null;      // bin/stock workbook
 let BIN_MAP = {};       // cleanedSku -> { totalQty, byCode:{code:qty}, locations:[bin strings] }
 let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
+
+// ============================================================
+// Supabase — shared state across the team
+// ============================================================
+const SB_URL  = 'https://lrghacmaymvpbmozlwir.supabase.co';
+const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxyZ2hhY21heW12cGJtb3psd2lyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MzExMzgsImV4cCI6MjA5NDEwNzEzOH0.PTv1v1jMFU3Rl7k-SbJRpgR1jbT7BQJixKvEVzPjGT8';
+const sb = (window.supabase && SB_URL && SB_ANON)
+  ? window.supabase.createClient(SB_URL, SB_ANON, { auth: { persistSession: false } })
+  : null;
+
+function getDisplayName(){ return localStorage.getItem('veeqo_to_nav_user') || ''; }
+function setDisplayName(n){ try { localStorage.setItem('veeqo_to_nav_user', n); } catch {} syncUserBtn(); }
+function syncUserBtn(){ const b = $('userNameBtn'); if (b) b.textContent = '👤 ' + (getDisplayName() || 'set name'); }
+async function ensureDisplayName(){
+  let n = getDisplayName();
+  if (!n){
+    const input = prompt('Enter your name (so the team can see who made each update):', '');
+    n = (input || '').trim() || 'Anonymous';
+    setDisplayName(n);
+  }
+  return n;
+}
+
+function relativeTime(iso){
+  if (!iso) return '';
+  const d = new Date(iso); const sec = Math.round((Date.now() - d.getTime()) / 1000);
+  if (sec < 60)    return 'just now';
+  if (sec < 3600)  return Math.floor(sec/60) + ' min ago';
+  if (sec < 86400) return Math.floor(sec/3600) + ' hr ago';
+  return Math.floor(sec/86400) + ' day(s) ago';
+}
+function setLastUpdated(elId, meta){
+  const el = $(elId); if (!el) return;
+  if (!meta){ el.textContent = 'Not yet shared'; el.title = ''; return; }
+  el.textContent = `Updated ${relativeTime(meta.updated_at)} by ${meta.updated_by || 'Anonymous'}`;
+  el.title = `${new Date(meta.updated_at).toLocaleString()} — by ${meta.updated_by || 'Anonymous'}`;
+}
+
+async function sbSaveSetting(key, value){
+  if (!sb) return;
+  const name = await ensureDisplayName();
+  const row = { key, value, updated_at: new Date().toISOString(), updated_by: name };
+  const { error } = await sb.from('app_settings').upsert(row);
+  if (error) log(`Supabase save (${key}) failed: ${error.message}`, 'badge-warn');
+  return row;
+}
+async function sbLoadSettings(){
+  if (!sb) return {};
+  const { data, error } = await sb.from('app_settings').select('*');
+  if (error){ log('Supabase load failed: ' + error.message, 'badge-warn'); return {}; }
+  const map = {};
+  for (const r of (data || [])) map[r.key] = r;
+  return map;
+}
+
+async function sbUploadFile(kind, file){
+  if (!sb) return null;
+  const name = await ensureDisplayName();
+  const ext = (file.name.split('.').pop() || 'xlsx').toLowerCase();
+  const path = `${kind}/current.${ext}`;
+  const { error: upErr } = await sb.storage.from('files').upload(path, file, { upsert: true, contentType: file.type || 'application/octet-stream' });
+  if (upErr){ log(`Upload failed (${kind}): ${upErr.message}`, 'badge-warn'); return null; }
+  const meta = { kind, storage_path: path, original_name: file.name, updated_at: new Date().toISOString(), updated_by: name };
+  const { error: metaErr } = await sb.from('shared_files').upsert(meta);
+  if (metaErr){ log(`Metadata save (${kind}) failed: ${metaErr.message}`, 'badge-warn'); return null; }
+  log(`"${file.name}" shared with the team.`, 'badge-ok');
+  setLastUpdated(kind === 'items' ? 'itemsLastUpdated' : 'binLastUpdated', meta);
+  return meta;
+}
+async function sbLoadFile(kind){
+  if (!sb) return null;
+  const { data: meta, error } = await sb.from('shared_files').select('*').eq('kind', kind).maybeSingle();
+  if (error){ log(`Load metadata (${kind}) failed: ${error.message}`, 'badge-warn'); return null; }
+  if (!meta){ setLastUpdated(kind === 'items' ? 'itemsLastUpdated' : 'binLastUpdated', null); return null; }
+  setLastUpdated(kind === 'items' ? 'itemsLastUpdated' : 'binLastUpdated', meta);
+  const { data: blob, error: dlErr } = await sb.storage.from('files').download(meta.storage_path);
+  if (dlErr){ log(`Download (${kind}) failed: ${dlErr.message}`, 'badge-warn'); return null; }
+  return { data: await blob.arrayBuffer(), name: meta.original_name };
+}
+
+// User-name button — click to change
+syncUserBtn();
+$('userNameBtn').addEventListener('click', () => {
+  const cur = getDisplayName();
+  const v = prompt('Your name (shown on shared updates):', cur);
+  if (v != null){ setDisplayName(v.trim() || 'Anonymous'); }
+});
 
 // =========================================================
 // Veeqo fetch
@@ -778,6 +909,8 @@ $('mapFile').addEventListener('change', async e => {
   } catch (err) {
     log(`Could not persist mapping file: ${err.message}`, 'badge-warn');
   }
+  // Share with team via Supabase
+  await sbUploadFile('items', f);
 });
 
 $('clearMapBtn').addEventListener('click', async () => {
@@ -791,27 +924,60 @@ $('clearMapBtn').addEventListener('click', async () => {
   if (ORDERS.length) previewOrders();
 });
 
-// Auto-restore on load
+// Auto-restore on load: try Supabase first (team source of truth),
+// fall back to IndexedDB (local cache) if Supabase has nothing / fails.
 (async () => {
-  const rec = await idbLoad('mapping');
-  if (rec && rec.data){
+  // ---- Items file ----
+  let itemsRec = null;
+  try { itemsRec = await sbLoadFile('items'); } catch {}
+  if (!itemsRec){ itemsRec = await idbLoad('mapping'); }
+  if (itemsRec && (itemsRec.data || itemsRec.buf)){
     try {
-      loadWorkbookFromBuffer(rec.data, rec.name || '(saved)');
-      setMapStatus(`Restored from storage: ${rec.name}`, true);
-      log(`Restored saved mapping "${rec.name}" (${new Date(rec.savedAt).toLocaleString()}).`, 'badge-ok');
+      const buf = itemsRec.data || itemsRec.buf;
+      loadWorkbookFromBuffer(buf, itemsRec.name || '(shared)');
+      setMapStatus(`Loaded: ${itemsRec.name}`, true);
+      log(`Items file "${itemsRec.name}" loaded.`, 'badge-ok');
     } catch (err) {
-      log(`Failed to restore saved mapping: ${err.message}`, 'badge-warn');
+      log(`Failed to load items file: ${err.message}`, 'badge-warn');
     }
+  } else {
+    setLastUpdated('itemsLastUpdated', null);
   }
-  const binRec = await idbLoad('binfile');
-  if (binRec && binRec.data){
+  // ---- Bin file ----
+  let binRec = null;
+  try { binRec = await sbLoadFile('bin'); } catch {}
+  if (!binRec){ binRec = await idbLoad('binfile'); }
+  if (binRec && (binRec.data || binRec.buf)){
     try {
-      loadBinWorkbookFromBuffer(binRec.data, binRec.name || '(saved)');
-      setBinStatus(`Restored from storage: ${binRec.name}`, true);
-      log(`Restored saved bin file "${binRec.name}" (${new Date(binRec.savedAt).toLocaleString()}).`, 'badge-ok');
+      const buf = binRec.data || binRec.buf;
+      loadBinWorkbookFromBuffer(buf, binRec.name || '(shared)');
+      setBinStatus(`Loaded: ${binRec.name}`, true);
     } catch (err) {
-      log(`Failed to restore bin file: ${err.message}`, 'badge-warn');
+      log(`Failed to load bin file: ${err.message}`, 'badge-warn');
     }
+  } else {
+    setLastUpdated('binLastUpdated', null);
+  }
+  // ---- Shared filters + store selection ----
+  try {
+    const map = await sbLoadSettings();
+    applySharedFilters(map);
+    const sharedStoreIds = applySharedStores(map);
+    if (sharedStoreIds && sharedStoreIds.length){
+      const p = getPrefs(); p.storeIds = sharedStoreIds;
+      try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {}
+      // Re-apply selection if stores list is already populated
+      const sel = $('stores');
+      if (sel && sel.options.length){
+        const set = new Set(sharedStoreIds.map(String));
+        Array.from(sel.options).forEach(o => { o.selected = set.has(o.value); });
+      } else if ($('apiKey').value) {
+        // Trigger a fresh stores load that will pick up the just-saved IDs
+        loadStores({ silent: true });
+      }
+    }
+  } catch (err) {
+    log('Failed to load shared filters: ' + err.message, 'badge-warn');
   }
 })();
 $('mapSheet').addEventListener('change', () => {
@@ -935,6 +1101,8 @@ $('binFile').addEventListener('change', async e => {
   } catch (err) {
     log(`Could not persist bin file: ${err.message}`, 'badge-warn');
   }
+  // Share with team via Supabase
+  await sbUploadFile('bin', f);
 });
 
 $('clearBinBtn').addEventListener('click', async () => {

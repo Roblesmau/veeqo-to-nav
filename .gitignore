@@ -7,3 +7,4 @@ Thumbs.db
 
 # Claude Code per-machine permissions (do not share)
 .claude/settings.local.json
+.claude/worktrees/
