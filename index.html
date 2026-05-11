@@ -932,23 +932,22 @@ async function uploadSlimItemsToSupabase(srcName){
   const ws = MAP_WB.Sheets[$('mapSheet').value]; if (!ws){ return; }
   const headerOpt = /^[A-Z]$/.test(cI) || /^[A-Z]$/.test(cU) || /^[A-Z]$/.test(cS) ? 'A' : undefined;
   const rows = XLSX.utils.sheet_to_json(ws, { header: headerOpt, defval: '' });
-  const slim = [];
+  // Build a CSV directly — much smaller than xlsx for plain text. SheetJS
+  // can read CSV transparently on load, so no special handling needed.
+  const escape = s => /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  const lines = ['Local SKU,Ecom SKU,UPC'];
   for (const r of rows){
     const sku  = String(r[cS] == null ? '' : r[cS]).trim();
     const ecom = String(r[cI] == null ? '' : r[cI]).trim();
     const upc  = String(r[cU] == null ? '' : r[cU]).trim();
     if (!sku && !ecom && !upc) continue;
-    slim.push({ 'Local SKU': sku, 'Ecom SKU': ecom, 'UPC': upc });
+    lines.push(`${escape(sku)},${escape(ecom)},${escape(upc)}`);
   }
-  // Build a fresh xlsx with stable 3-column headers
-  const newWs = XLSX.utils.json_to_sheet(slim, { header: ['Local SKU','Ecom SKU','UPC'] });
-  const newWb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(newWb, newWs, 'Items');
-  const buf = XLSX.write(newWb, { bookType: 'xlsx', type: 'array' });
-  const slimName = (srcName || 'items') + ' (slim 3-col).xlsx';
-  const slimFile = new File([buf], slimName, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const sizeMb = (buf.byteLength / 1024 / 1024).toFixed(2);
-  log(`Sharing slim items (${slim.length.toLocaleString()} rows, ${sizeMb} MB) with the team…`);
+  const csv = lines.join('\n');
+  const slimName = ((srcName || 'items').replace(/\.[^.]+$/, '')) + ' (slim 3-col).csv';
+  const slimFile = new File([csv], slimName, { type: 'text/csv' });
+  const sizeMb = (slimFile.size / 1024 / 1024).toFixed(2);
+  log(`Sharing slim items (${(lines.length-1).toLocaleString()} rows, ${sizeMb} MB CSV) with the team…`);
   await sbUploadFile('items', slimFile);
 }
 
