@@ -1262,43 +1262,16 @@ $('copySelectedBtn').addEventListener('click', () => {
 
 function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
-// Render a "Buy label" link button for an order. Veeqo's orders list
-// search is client-side only (no URL filter available), so we instead:
-//   1) copy the order number to the clipboard, and
-//   2) open Veeqo's orders list page in a new tab.
-// The user then pastes (Ctrl+V) into Veeqo's search bar — one row, Buy
-// label visible. Both halves happen in a single click.
+// Render a "Buy label" link button for an order. Veeqo accepts a
+// ?number=<orderNumber> query parameter on the orders list that
+// auto-filters down to just that one shipment — so a plain <a> link
+// is all we need. One click → filtered Veeqo view with Buy label
+// already visible.
 function veeqoLinkBtn(orderNumber){
   if (!orderNumber) return '';
-  const numEsc = String(orderNumber).replace(/'/g, "\\'");
-  return `<button class="veeqo-link" onclick="openVeeqoBuyLabel('${numEsc}')" title="Copies order # to clipboard and opens Veeqo orders list — paste (Ctrl+V) into the Veeqo search bar.">Buy label ↗</button>`;
+  const url = `https://app.veeqo.com/orders?number=${encodeURIComponent(orderNumber)}`;
+  return `<a href="${url}" target="_blank" rel="noopener noreferrer" class="veeqo-link" title="Open Veeqo orders list filtered to this order (new tab) — Buy label is right there.">Buy label ↗</a>`;
 }
-
-// Click handler for the Buy label button.
-window.openVeeqoBuyLabel = function(orderNumber){
-  // Copy first (must run synchronously within the click handler so the
-  // clipboard write is allowed by the browser).
-  let copyOk = false;
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText){
-      navigator.clipboard.writeText(orderNumber);
-      copyOk = true;
-    } else {
-      // Fallback for older browsers
-      const ta = document.createElement('textarea');
-      ta.value = orderNumber; document.body.appendChild(ta);
-      ta.select(); document.execCommand('copy');
-      document.body.removeChild(ta);
-      copyOk = true;
-    }
-  } catch (e) { copyOk = false; }
-  // Open Veeqo orders list in a new tab
-  window.open('https://app.veeqo.com/orders', '_blank', 'noopener,noreferrer');
-  // Toast
-  showToast(copyOk
-    ? `Order ${orderNumber} copied — paste it into Veeqo's search bar (Ctrl+V).`
-    : `Open Veeqo and search for ${orderNumber}.`);
-};
 
 function showToast(msg){
   let toast = document.getElementById('appToast');
