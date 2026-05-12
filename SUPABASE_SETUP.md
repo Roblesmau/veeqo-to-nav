@@ -34,6 +34,15 @@ create table if not exists shared_files (
   updated_by    text
 );
 
+-- Append-only team activity log (panel 7 — Team activity feed).
+create table if not exists activity_log (
+  id    bigserial   primary key,
+  ts    timestamptz not null default now(),
+  who   text,
+  what  text
+);
+create index if not exists activity_log_ts_idx on activity_log (ts desc);
+
 -- ============================================================
 -- ROW-LEVEL SECURITY
 -- Single-workspace model: anyone with the anon key can read + write.
@@ -41,6 +50,7 @@ create table if not exists shared_files (
 -- ============================================================
 alter table app_settings  enable row level security;
 alter table shared_files  enable row level security;
+alter table activity_log  enable row level security;
 
 drop policy if exists "settings: read"   on app_settings;
 drop policy if exists "settings: write"  on app_settings;
@@ -48,6 +58,8 @@ drop policy if exists "settings: update" on app_settings;
 drop policy if exists "files: read"      on shared_files;
 drop policy if exists "files: write"     on shared_files;
 drop policy if exists "files: update"    on shared_files;
+drop policy if exists "activity: read"   on activity_log;
+drop policy if exists "activity: write"  on activity_log;
 
 create policy "settings: read"   on app_settings for select using (true);
 create policy "settings: write"  on app_settings for insert with check (true);
@@ -56,6 +68,9 @@ create policy "settings: update" on app_settings for update using (true);
 create policy "files: read"      on shared_files for select using (true);
 create policy "files: write"     on shared_files for insert with check (true);
 create policy "files: update"    on shared_files for update using (true);
+
+create policy "activity: read"   on activity_log for select using (true);
+create policy "activity: write"  on activity_log for insert with check (true);
 ```
 
 ## 2. Create the Storage bucket

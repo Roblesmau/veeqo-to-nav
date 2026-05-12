@@ -86,6 +86,19 @@
   .badge-warn{color:var(--warn)}
   .badge-err{color:var(--err)}
   details{border:1px dashed var(--line);border-radius:6px;padding:8px 10px;margin-bottom:10px}
+  /* Filter banner — prominent summary of active filters on the Orders tab */
+  .filter-banner{background:linear-gradient(135deg,rgba(91,140,255,.10),rgba(58,210,159,.10));border:1.5px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:12px;display:flex;gap:18px;flex-wrap:wrap;align-items:center;box-shadow:0 0 0 1px rgba(91,140,255,.18)}
+  html[data-theme="light"] .filter-banner{background:linear-gradient(135deg,rgba(62,99,221,.06),rgba(31,159,110,.06))}
+  .fb-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .fb-label{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.7px;font-weight:600}
+  .fb-chip{display:inline-block;background:var(--panel2);border:1px solid var(--accent);color:var(--accent);border-radius:6px;padding:3px 10px;font-size:12px;font-weight:700;letter-spacing:.2px}
+  .fb-chip.fb-any{border-color:var(--line);color:var(--muted);font-weight:500}
+  /* Activity feed */
+  .activity-row{font-size:11px;color:var(--text);padding:4px 0;border-bottom:1px dashed var(--line);display:flex;gap:8px;align-items:baseline}
+  .activity-row:last-child{border-bottom:none}
+  .activity-time{color:var(--muted);font-size:10px;min-width:78px;flex-shrink:0}
+  .activity-who{color:var(--accent2);font-weight:600}
+  .activity-what{color:var(--text)}
   summary{cursor:pointer;color:var(--muted)}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
@@ -239,11 +252,32 @@
       </div>
     </fieldset>
 
+    <fieldset>
+      <legend>6 · Insufficient-stock webhook</legend>
+      <div class="hint">After each fetch, if any <b>new</b> insufficient-stock orders appear, the app POSTs a summary to this URL. Works with Slack incoming webhooks. Per-user (saved in your browser only).</div>
+      <label>Webhook URL</label>
+      <input id="webhookUrl" placeholder="https://hooks.slack.com/services/..." type="url"/>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px"><input id="webhookEnabled" type="checkbox" style="width:auto"/> Enabled</label>
+      <button id="webhookTestBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600;margin-top:6px">Send test message</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>7 · Team activity</legend>
+      <div class="hint">Last 20 shared changes by the team (filters, items file, bin file). Refreshes when you reload.</div>
+      <div id="activityFeed" style="max-height:220px;overflow:auto;font-size:11px;margin-top:6px">Loading…</div>
+      <button id="refreshActivityBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600;margin-top:6px">Refresh</button>
+    </fieldset>
+
   </aside>
   </div>
 
   <div class="tab-panel" id="tab-orders">
   <section>
+    <div class="filter-banner" id="filterBanner" title="Filters currently applied to the orders fetch — change these on the Setup tab → panel 2">
+      <div class="fb-group"><span class="fb-label">📅 Dates</span><span id="fbDates" class="fb-chip fb-any">Any</span></div>
+      <div class="fb-group"><span class="fb-label">📦 Status</span><span id="fbStatus" class="fb-chip fb-any">Any</span></div>
+      <div class="fb-group"><span class="fb-label">🏬 Stores</span><span id="fbStores" class="fb-chip fb-any">All stores</span></div>
+    </div>
     <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:6px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
@@ -426,6 +460,44 @@ for (const id of SHARED_FILTER_IDS){
 }
 $('stores').addEventListener('change', () => saveStoresToSupabase());
 
+// ============================================================
+// Filter banner (Orders tab) — visible summary of active filters
+// ============================================================
+function updateFilterBanner(){
+  const from = $('fromDate') ? $('fromDate').value : '';
+  const to   = $('toDate')   ? $('toDate').value   : '';
+  const datesEl = $('fbDates'); if (datesEl){
+    let txt = 'Any', any = !from && !to;
+    if (from && to) txt = `${from}  →  ${to}`;
+    else if (from)  txt = `From ${from}`;
+    else if (to)    txt = `Up to ${to}`;
+    datesEl.textContent = txt;
+    datesEl.className = 'fb-chip' + (any ? ' fb-any' : '');
+  }
+  const statusEl = $('fbStatus'); if (statusEl){
+    const sel = $('status') && $('status').value;
+    const txt = sel ? ($('status').selectedOptions[0]?.textContent || sel) : 'Any';
+    statusEl.textContent = txt;
+    statusEl.className = 'fb-chip' + (sel ? '' : ' fb-any');
+  }
+  const storesEl = $('fbStores'); if (storesEl){
+    const opts = $('stores') ? Array.from($('stores').selectedOptions) : [];
+    if (!opts.length){
+      storesEl.textContent = 'All stores'; storesEl.className = 'fb-chip fb-any'; storesEl.removeAttribute('title');
+    } else {
+      const names = opts.map(o => o.textContent.replace(/\s*\[#\d+\]\s*$/, ''));
+      storesEl.textContent = names.length <= 3 ? names.join(', ') : `${names.length} stores`;
+      storesEl.title = names.join(', ');
+      storesEl.className = 'fb-chip';
+    }
+  }
+}
+// Refresh banner on any relevant change
+['fromDate','toDate','status','stores'].forEach(id => {
+  if ($(id)) $(id).addEventListener('change', updateFilterBanner);
+});
+updateFilterBanner();
+
 // Manual "Share filters now" — pushes filters + stores together and gives feedback
 $('shareFiltersBtn').addEventListener('click', async () => {
   if (!sb){
@@ -509,7 +581,9 @@ async function sbSaveSetting(key, value){
   const name = await ensureDisplayName();
   const row = { key, value, updated_at: new Date().toISOString(), updated_by: name };
   const { error } = await sb.from('app_settings').upsert(row);
-  if (error) log(`Supabase save (${key}) failed: ${error.message}`, 'badge-warn');
+  if (error){ log(`Supabase save (${key}) failed: ${error.message}`, 'badge-warn'); return row; }
+  // Lightweight activity entry; ignore failure if table missing.
+  logActivity(`Updated ${key}`);
   return row;
 }
 async function sbLoadSettings(){
@@ -521,7 +595,7 @@ async function sbLoadSettings(){
   return map;
 }
 
-async function sbUploadFile(kind, file){
+async function sbUploadFile(kind, file, extraSummary){
   if (!sb) return null;
   const name = await ensureDisplayName();
   const ext = (file.name.split('.').pop() || 'xlsx').toLowerCase();
@@ -533,7 +607,31 @@ async function sbUploadFile(kind, file){
   if (metaErr){ log(`Metadata save (${kind}) failed: ${metaErr.message}`, 'badge-warn'); return null; }
   log(`"${file.name}" shared with the team.`, 'badge-ok');
   setLastUpdated(kind === 'items' ? 'itemsLastUpdated' : 'binLastUpdated', meta);
+  logActivity(`Shared ${kind} file: ${file.name}${extraSummary ? ' — ' + extraSummary : ''}`);
   return meta;
+}
+
+// ============================================================
+// Activity feed (#17) — append-only log of team changes
+// Requires an `activity_log` table; see ACTIVITY_LOG_SETUP at bottom of file.
+// ============================================================
+async function logActivity(what){
+  if (!sb) return;
+  try {
+    const who = await ensureDisplayName();
+    await sb.from('activity_log').insert({ who, what, ts: new Date().toISOString() });
+  } catch { /* table may not exist yet — fail silently */ }
+}
+async function refreshActivityFeed(){
+  const el = $('activityFeed'); if (!el) return;
+  if (!sb){ el.textContent = 'Supabase not configured.'; return; }
+  const { data, error } = await sb.from('activity_log').select('*').order('ts', { ascending: false }).limit(20);
+  if (error){
+    el.innerHTML = `<div class="hint" style="color:var(--warn)">Activity log unavailable. Run the SQL from SUPABASE_SETUP.md → "Activity log" section.</div>`;
+    return;
+  }
+  if (!data || !data.length){ el.textContent = 'No activity yet.'; return; }
+  el.innerHTML = data.map(r => `<div class="activity-row"><span class="activity-time">${relativeTime(r.ts)}</span><span class="activity-who">${esc(r.who||'Anonymous')}</span><span class="activity-what">${esc(r.what||'')}</span></div>`).join('');
 }
 async function sbLoadFile(kind){
   if (!sb) return null;
@@ -667,6 +765,9 @@ $('fetchBtn').addEventListener('click', async () => {
     for (const n of [...SELECTED_ORDERS]) if (!visibleNums.has(n)) SELECTED_ORDERS.delete(n);
     updateOrderStats();
     previewOrders();
+    updateFilterBanner();
+    // #18 — fire webhook for newly-detected insufficient orders
+    checkAndFireInsufficientWebhook();
   } catch (e){
     surfaceError('Fetch failed', e);
   } finally {
@@ -992,7 +1093,56 @@ async function uploadSlimItemsToSupabase(srcName){
   const slimFile = new File([csv], slimName, { type: 'text/csv' });
   const sizeMb = (slimFile.size / 1024 / 1024).toFixed(2);
   log(`Sharing slim items (${(lines.length-1).toLocaleString()} rows, ${sizeMb} MB CSV) with the team…`);
-  await sbUploadFile('items', slimFile);
+  // Compute diff vs whatever is currently in Supabase so the log + activity
+  // feed shows "added X, removed Y, changed Z" instead of just "shared".
+  let diffSummary = '';
+  try {
+    const prev = await sbLoadFile('items');
+    if (prev && prev.data){
+      const oldText = new TextDecoder().decode(new Uint8Array(prev.data));
+      const diff = diffSlimItemsCsv(oldText, csv);
+      diffSummary = `+${diff.added} added, −${diff.removed} removed, ~${diff.changed} changed`;
+      log(`Items diff vs previous shared file: ${diffSummary}`, diff.added||diff.removed||diff.changed ? 'badge-ok' : '');
+    }
+  } catch (e){
+    log('Diff vs previous items file failed: ' + e.message, 'badge-warn');
+  }
+  await sbUploadFile('items', slimFile, diffSummary || `${(lines.length-1).toLocaleString()} rows`);
+}
+// Parse a slim 3-col CSV (Local SKU,Ecom SKU,UPC) into a Map keyed by Local SKU.
+function parseSlimCsv(text){
+  const map = new Map();
+  const rows = String(text||'').split(/\r?\n/);
+  for (let i=1;i<rows.length;i++){
+    const line = rows[i]; if (!line) continue;
+    // simple CSV split — fields don't have commas/newlines in our slim file
+    // unless quoted; handle quoted-with-commas if present.
+    let cells;
+    if (line.includes('"')){
+      cells = []; let cur='', q=false;
+      for (const ch of line){
+        if (q){ if (ch==='"') q=false; else cur+=ch; }
+        else if (ch==='"') q=true;
+        else if (ch===','){ cells.push(cur); cur=''; }
+        else cur+=ch;
+      }
+      cells.push(cur);
+    } else cells = line.split(',');
+    const [sku, ecom, upc] = cells;
+    if (sku || ecom || upc) map.set(String(sku||'').trim(), { ecom:String(ecom||'').trim(), upc:String(upc||'').trim() });
+  }
+  return map;
+}
+function diffSlimItemsCsv(oldText, newText){
+  const A = parseSlimCsv(oldText), B = parseSlimCsv(newText);
+  let added=0, removed=0, changed=0;
+  for (const k of B.keys()){
+    if (!A.has(k)) { added++; continue; }
+    const a=A.get(k), b=B.get(k);
+    if (a.ecom !== b.ecom || a.upc !== b.upc) changed++;
+  }
+  for (const k of A.keys()) if (!B.has(k)) removed++;
+  return { added, removed, changed };
 }
 
 $('clearMapBtn').addEventListener('click', async () => {
@@ -1061,7 +1211,106 @@ $('clearMapBtn').addEventListener('click', async () => {
   } catch (err) {
     log('Failed to load shared filters: ' + err.message, 'badge-warn');
   }
+  // Boot the activity feed
+  refreshActivityFeed();
 })();
+
+// ============================================================
+// #18 — Insufficient-stock webhook (Slack-compatible)
+// Per-user config (localStorage). Posts a JSON summary whenever NEW
+// insufficient orders show up between consecutive fetches.
+// ============================================================
+const WH_URL_KEY = 'veeqo_to_nav_webhook_url';
+const WH_ON_KEY  = 'veeqo_to_nav_webhook_on';
+// Restore saved settings
+(function(){
+  const u = localStorage.getItem(WH_URL_KEY) || '';
+  const on = localStorage.getItem(WH_ON_KEY) === '1';
+  if ($('webhookUrl'))     $('webhookUrl').value = u;
+  if ($('webhookEnabled')) $('webhookEnabled').checked = on;
+})();
+$('webhookUrl')?.addEventListener('change', () => {
+  try { localStorage.setItem(WH_URL_KEY, $('webhookUrl').value.trim()); } catch {}
+});
+$('webhookEnabled')?.addEventListener('change', () => {
+  try { localStorage.setItem(WH_ON_KEY, $('webhookEnabled').checked ? '1' : '0'); } catch {}
+});
+$('webhookTestBtn')?.addEventListener('click', async () => {
+  const url = ($('webhookUrl').value || '').trim();
+  if (!url){ alert('Set a webhook URL first.'); return; }
+  try {
+    await fetch(url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text: `Veeqo→Nav webhook test from ${getDisplayName() || 'Anonymous'} ✅` })
+    });
+    log('Webhook test sent (check Slack — no-cors hides errors).', 'badge-ok');
+  } catch (e){
+    log('Webhook test failed: ' + e.message, 'badge-warn');
+  }
+});
+
+// Track which order numbers were insufficient on the previous fetch so we
+// only fire the webhook for NEW ones (no spam every 5 min on the same orders).
+let LAST_INSUFFICIENT = new Set();
+function checkAndFireInsufficientWebhook(){
+  const url = ($('webhookUrl')?.value || '').trim();
+  const on  = $('webhookEnabled')?.checked;
+  if (!on || !url) return;
+  // Re-derive insufficient orders from current ORDERS using cumulative demand,
+  // mirroring previewOrders() — keep this cheap and tolerant of missing bin data.
+  const sorted = [...ORDERS].sort((a,b) => String(a.created_at||'').localeCompare(String(b.created_at||'')));
+  const cum = {}; const fresh = [];
+  for (const o of sorted){
+    for (const li of (o.line_items || [])){
+      const sv = li.sellable || li.product || {};
+      const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+      const qty = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+      const ecom = ecomItem(rawSku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const lookupSku = m ? m.sku : '';
+      const binEntry = lookupBinEntry(lookupSku, ecom, rawSku);
+      let total = 0;
+      for (const code of LOCATION_CODES) total += (binEntry?.byCode?.[code]) || 0;
+      const key = cleanItem(lookupSku) || cleanItem(rawSku) || cleanItem(ecom);
+      const used = cum[key] || 0; cum[key] = used + qty;
+      if (key && (used + qty) > total){
+        const num = o.number || o.id || '';
+        if (num && !LAST_INSUFFICIENT.has(num)) fresh.push({ num, sku: rawSku, qty, available: total });
+      }
+    }
+  }
+  // Update LAST_INSUFFICIENT for next run
+  const allNow = new Set();
+  for (const o of sorted){
+    for (const li of (o.line_items || [])){
+      const sv = li.sellable || li.product || {};
+      const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+      const m = MAPPING[cleanItem(ecomItem(rawSku))] || MAPPING[cleanItem(rawSku)] || null;
+      const lookupSku = m ? m.sku : '';
+      const binEntry = lookupBinEntry(lookupSku, ecomItem(rawSku), rawSku);
+      let total = 0;
+      for (const code of LOCATION_CODES) total += (binEntry?.byCode?.[code]) || 0;
+      const key = cleanItem(lookupSku) || cleanItem(rawSku) || cleanItem(ecomItem(rawSku));
+      // (re-running for simplicity; small N)
+      void key; void total;
+    }
+  }
+  // Use the freshly-detected list as the new baseline
+  LAST_INSUFFICIENT = new Set([...LAST_INSUFFICIENT, ...fresh.map(x => x.num)]);
+  if (!fresh.length) return;
+  const lines = fresh.slice(0, 20).map(x => `• ${x.num} — ${x.sku} (need ${x.qty}, have ${x.available})`);
+  const extra = fresh.length > 20 ? `\n…and ${fresh.length-20} more` : '';
+  const text = `⚠ *${fresh.length} new insufficient-stock order${fresh.length===1?'':'s'}* — flagged by ${getDisplayName()||'Anonymous'}\n${lines.join('\n')}${extra}`;
+  try {
+    fetch(url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ text }) });
+    log(`Webhook fired for ${fresh.length} new insufficient order(s).`, 'badge-ok');
+    logActivity(`Webhook fired: ${fresh.length} new insufficient order(s)`);
+  } catch (e){
+    log('Webhook fire failed: ' + e.message, 'badge-warn');
+  }
+}
+
+$('refreshActivityBtn')?.addEventListener('click', refreshActivityFeed);
+
 $('mapSheet').addEventListener('change', () => {
   if (!MAP_WB) return;
   const ws = MAP_WB.Sheets[$('mapSheet').value];
