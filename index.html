@@ -265,11 +265,24 @@
 
     <fieldset>
       <legend>6 · Insufficient-stock webhook</legend>
-      <div class="hint">After each fetch, if any <b>new</b> insufficient-stock orders appear, the app POSTs a summary to this URL. Works with Slack incoming webhooks. Per-user (saved in your browser only).</div>
+      <div class="hint">After each fetch, if any <b>new</b> insufficient-stock orders appear, the app POSTs a summary to this URL. Works with Slack / Teams incoming webhooks.</div>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:4px">
+        <span style="flex-shrink:0">Source</span>
+        <select id="webhookSource" style="flex:1" title="Team default = same URL for everyone, saved in Supabase. My URL = private per-browser URL.">
+          <option value="team">🏢 Team default (shared)</option>
+          <option value="mine">👤 My URL (private)</option>
+        </select>
+      </label>
+      <div style="display:flex;justify-content:flex-end;margin-bottom:4px">
+        <span class="pill" id="webhookLastUpdated" style="font-size:10px" hidden>—</span>
+      </div>
       <label>Webhook URL</label>
-      <input id="webhookUrl" placeholder="https://hooks.slack.com/services/..." type="url"/>
-      <label style="display:flex;align-items:center;gap:6px;margin-top:6px"><input id="webhookEnabled" type="checkbox" style="width:auto"/> Enabled</label>
-      <button id="webhookTestBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600;margin-top:6px">Send test message</button>
+      <input id="webhookUrl" placeholder="https://outlook.office.com/webhook/... or https://hooks.slack.com/..." type="url"/>
+      <label style="display:flex;align-items:center;gap:6px;margin-top:6px"><input id="webhookEnabled" type="checkbox" style="width:auto"/> Enabled (per-user — uncheck to silence alerts on this browser)</label>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button id="webhookTestBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Send test message</button>
+        <button id="webhookPublishBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600" title="Copy this URL to the Team default so everyone uses it" hidden>Push to team default</button>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -1304,35 +1317,132 @@ $('clearMapBtn').addEventListener('click', async () => {
 })();
 
 // ============================================================
-// #18 — Insufficient-stock webhook (Slack-compatible)
-// Per-user config (localStorage). Posts a JSON summary whenever NEW
-// insufficient orders show up between consecutive fetches.
+// #18 — Insufficient-stock webhook (Slack / Teams compatible)
+// Two sources, user picks which:
+//   - "team" → URL stored in Supabase app_settings.webhook_url (everyone shares)
+//   - "mine" → URL stored in this browser's localStorage (private)
+// Enabled flag stays per-user — teammates can silence alerts locally.
 // ============================================================
-const WH_URL_KEY = 'veeqo_to_nav_webhook_url';
-const WH_ON_KEY  = 'veeqo_to_nav_webhook_on';
-// Restore saved settings
-(function(){
+const WH_URL_KEY    = 'veeqo_to_nav_webhook_url';        // per-user URL
+const WH_ON_KEY     = 'veeqo_to_nav_webhook_on';         // per-user enabled
+const WH_SOURCE_KEY = 'veeqo_to_nav_webhook_source';     // 'team' | 'mine'
+let _teamWebhookUrl = '';                                // last-known team URL from Supabase
+let _teamWebhookMeta = null;                             // metadata row from Supabase
+
+function getWebhookSource(){ return $('webhookSource')?.value || 'team'; }
+function getActiveWebhookUrl(){
+  return (getWebhookSource() === 'team' ? _teamWebhookUrl : (localStorage.getItem(WH_URL_KEY) || '')).trim();
+}
+
+function refreshWebhookPill(){
+  const pill = $('webhookLastUpdated'); if (!pill) return;
+  if (getWebhookSource() === 'team' && _teamWebhookMeta){
+    pill.hidden = false;
+    pill.textContent = `✓ Team URL updated ${relativeTime(_teamWebhookMeta.updated_at)} by ${_teamWebhookMeta.updated_by || 'Anonymous'}`;
+    pill.className = 'pill share-ok';
+  } else if (getWebhookSource() === 'team'){
+    pill.hidden = false;
+    pill.textContent = '⚠ No team URL set yet';
+    pill.className = 'pill share-warn';
+  } else {
+    pill.hidden = true;
+  }
+}
+
+function applyWebhookSourceUI(){
+  const src = getWebhookSource();
+  const input = $('webhookUrl');
+  const publishBtn = $('webhookPublishBtn');
+  if (src === 'team'){
+    input.value = _teamWebhookUrl;
+    input.placeholder = 'https://outlook.office.com/webhook/...  (shared with team)';
+    publishBtn.hidden = true;
+  } else {
+    input.value = localStorage.getItem(WH_URL_KEY) || '';
+    input.placeholder = 'https://outlook.office.com/webhook/... or https://hooks.slack.com/... (private)';
+    publishBtn.hidden = false;
+  }
+  refreshWebhookPill();
+}
+
+async function loadTeamWebhook(){
+  if (!sb) return;
+  try {
+    const { data, error } = await sb.from('app_settings').select('*').eq('key', 'webhook_url').maybeSingle();
+    if (error) throw error;
+    if (data){
+      _teamWebhookUrl = String(data.value || '').trim();
+      _teamWebhookMeta = data;
+    }
+  } catch (e){
+    log('Load team webhook failed: ' + e.message, 'badge-warn');
+  }
+  applyWebhookSourceUI();
+}
+
+// Restore per-user saved state, default source = 'team'
+(function initWebhook(){
   const u = localStorage.getItem(WH_URL_KEY) || '';
   const on = localStorage.getItem(WH_ON_KEY) === '1';
-  if ($('webhookUrl'))     $('webhookUrl').value = u;
+  const src = localStorage.getItem(WH_SOURCE_KEY) || 'team';
+  if ($('webhookSource'))  $('webhookSource').value = src;
   if ($('webhookEnabled')) $('webhookEnabled').checked = on;
+  if ($('webhookUrl'))     $('webhookUrl').value = src === 'mine' ? u : '';
+  applyWebhookSourceUI();
+  loadTeamWebhook(); // async — updates field/pill once it returns
 })();
-$('webhookUrl')?.addEventListener('change', () => {
-  try { localStorage.setItem(WH_URL_KEY, $('webhookUrl').value.trim()); } catch {}
+
+$('webhookSource')?.addEventListener('change', () => {
+  try { localStorage.setItem(WH_SOURCE_KEY, getWebhookSource()); } catch {}
+  applyWebhookSourceUI();
 });
+
+$('webhookUrl')?.addEventListener('change', async () => {
+  const val = ($('webhookUrl').value || '').trim();
+  if (getWebhookSource() === 'team'){
+    if (!sb){ alert('Supabase not configured — can\'t save team URL.'); return; }
+    const row = await sbSaveSetting('webhook_url', val);
+    if (row){
+      _teamWebhookUrl = val;
+      _teamWebhookMeta = row;
+      refreshWebhookPill();
+      log('Team webhook URL updated — everyone using "Team default" picks this up on reload.', 'badge-ok');
+    }
+  } else {
+    try { localStorage.setItem(WH_URL_KEY, val); } catch {}
+  }
+});
+
 $('webhookEnabled')?.addEventListener('change', () => {
   try { localStorage.setItem(WH_ON_KEY, $('webhookEnabled').checked ? '1' : '0'); } catch {}
 });
+
 $('webhookTestBtn')?.addEventListener('click', async () => {
-  const url = ($('webhookUrl').value || '').trim();
+  const url = getActiveWebhookUrl();
   if (!url){ alert('Set a webhook URL first.'); return; }
   try {
     await fetch(url, { method:'POST', mode:'no-cors', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ text: `Veeqo→Nav webhook test from ${getDisplayName() || 'Anonymous'} ✅` })
     });
-    log('Webhook test sent (check Slack — no-cors hides errors).', 'badge-ok');
+    log('Webhook test sent (no-cors hides errors — check the target channel).', 'badge-ok');
   } catch (e){
     log('Webhook test failed: ' + e.message, 'badge-warn');
+  }
+});
+
+// "Push to team default" — copies the private URL into Supabase as the team URL
+$('webhookPublishBtn')?.addEventListener('click', async () => {
+  const u = (localStorage.getItem(WH_URL_KEY) || '').trim();
+  if (!u){ alert('Set your private URL first.'); return; }
+  if (!sb){ alert('Supabase not configured.'); return; }
+  if (!confirm('Copy your private URL to the Team default? Everyone using "Team default" will start posting to this URL on their next reload.')) return;
+  const row = await sbSaveSetting('webhook_url', u);
+  if (row){
+    _teamWebhookUrl = u;
+    _teamWebhookMeta = row;
+    log('Published your URL to the Team default.', 'badge-ok');
+    logActivity('Published webhook URL to Team default');
+    refreshWebhookPill();
   }
 });
 
@@ -1340,7 +1450,7 @@ $('webhookTestBtn')?.addEventListener('click', async () => {
 // only fire the webhook for NEW ones (no spam every 5 min on the same orders).
 let LAST_INSUFFICIENT = new Set();
 function checkAndFireInsufficientWebhook(){
-  const url = ($('webhookUrl')?.value || '').trim();
+  const url = getActiveWebhookUrl();
   const on  = $('webhookEnabled')?.checked;
   if (!on || !url) return;
   // Re-derive insufficient orders from current ORDERS using cumulative demand,
