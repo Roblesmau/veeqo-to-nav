@@ -26,9 +26,13 @@ Same domain → no CORS, no second platform.
 - **Proxy stays thin.** `api/[...path].js` forwards to `api.veeqo.com` and strips host/origin/`x-vercel-*` headers. Don't add business logic to the proxy.
 - **API keys live in the user's browser only.** Never hardcode a Veeqo API key. Never log it. Never send it to Supabase.
 - **Three storage layers, distinct purposes:**
-  - `localStorage` — per-user prefs (API key, theme, display name, column choices, store selection).
+  - `localStorage` — per-user prefs (API key, theme, display name, column choices, store selection, webhook URL, filter-scope choice).
   - `IndexedDB` (`veeqo_to_nav_db`) — local cache of Items + Bin files for offline reuse.
-  - `Supabase` — team-shared filter settings + Items/Bin files. Each shows a "Updated by [name] [time]" pill.
+  - `Supabase` — team-shared filter settings + Items/Bin files + activity log. Each shows a "Updated by [name] [time]" pill.
+- **Filter scope (multi-tenant lite):** filters + stores have two Supabase rows per user:
+  - `filters` / `stores` — Team default (visible to everyone).
+  - `filters:user:<NAME>` / `stores:user:<NAME>` — private per-user view.
+  Dropdown on panel 2 switches between them. Items and Bin files are *always* shared.
 
 ---
 

@@ -144,8 +144,18 @@
 
     <fieldset>
       <legend>2 · Filters</legend>
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
-        <button id="shareFiltersBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Share filters now</button>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+        <span style="flex-shrink:0">Filter view</span>
+        <select id="filterScope" style="flex:1" title="Team default = shared with everyone. My filters = your private view (still saved to Supabase, but not shared).">
+          <option value="shared">🏢 Team default</option>
+          <option value="mine">👤 My filters</option>
+        </select>
+      </label>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px;flex-wrap:wrap">
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button id="shareFiltersBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Save view</button>
+          <button id="publishToTeamBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600" title="Copy your current My filters view to the Team default" hidden>Make this the team default</button>
+        </div>
         <span class="pill" id="filtersLastUpdated" style="font-size:10px">Loading…</span>
       </div>
       <div class="row">
@@ -417,48 +427,124 @@ loadPrefs();
 })();
 
 // ============================================================
-// Shared filter settings (panel 2) — saved to Supabase
-// Fields shared across team: status, query, pageSize, maxPages, stores.
-// NOT shared: date range (rolling per-user) + API key (private per-user).
+// Filter settings (panel 2) — scope-aware (#16, Option A)
+// Two views per user:
+//   - "shared" (Team default)  → Supabase key  filters / stores
+//   - "mine"   (My filters)    → Supabase key  filters:user:<NAME> / stores:user:<NAME>
+// Date range stays per-user-local (rolling). API key is never shared.
 // ============================================================
 const SHARED_FILTER_IDS = ['status','query','pageSize','maxPages'];
+const SCOPE_KEY = 'veeqo_to_nav_filter_scope';
 
-function applySharedFilters(map){
-  const f = map.filters;
+function getFilterScope(){
+  const el = $('filterScope'); return (el && el.value) || 'shared';
+}
+function scopedKey(base){
+  if (getFilterScope() === 'shared') return base;
+  const who = (getDisplayName() || 'Anonymous').toLowerCase().replace(/\s+/g,'_');
+  return `${base}:user:${who}`;
+}
+
+function applyFiltersFromMap(map){
+  const f = map[scopedKey('filters')];
   if (f && f.value){
     for (const id of SHARED_FILTER_IDS){
       if (f.value[id] != null && $(id)) $(id).value = f.value[id];
     }
     setLastUpdated('filtersLastUpdated', f);
-  } else {
-    // No shared row yet — seed Supabase with current local values so
-    // the team starts from the same baseline. Pill flips to ✓ immediately.
+  } else if (getFilterScope() === 'shared') {
+    // No team default yet — seed Supabase with current local values
+    // so the pill flips to ✓ and the team has a baseline.
     setLastUpdated('filtersLastUpdated', null);
     saveFiltersToSupabase();
+  } else {
+    // Personal view has no saved values yet — pill stays ⚠ until user saves
+    setLastUpdated('filtersLastUpdated', null);
   }
 }
-function applySharedStores(map){
-  // Selection applied after stores list is loaded — see loadStores().
-  return (map.stores && Array.isArray(map.stores.value)) ? map.stores.value : null;
+function getStoresFromMap(map){
+  const row = map[scopedKey('stores')];
+  return (row && Array.isArray(row.value)) ? row.value : null;
 }
 async function saveFiltersToSupabase(){
   if (!sb) return;
   const value = {};
   for (const id of SHARED_FILTER_IDS) if ($(id)) value[id] = $(id).value;
-  const row = await sbSaveSetting('filters', value);
+  const row = await sbSaveSetting(scopedKey('filters'), value);
   if (row) setLastUpdated('filtersLastUpdated', row);
 }
 async function saveStoresToSupabase(){
   if (!sb) return;
   const ids = Array.from($('stores').selectedOptions).map(o => o.value);
-  await sbSaveSetting('stores', ids);
+  await sbSaveSetting(scopedKey('stores'), ids);
 }
 
-// Hook filter inputs (panel 2) — write to Supabase on change
+// Hook filter inputs — write to whichever scope is currently selected
 for (const id of SHARED_FILTER_IDS){
   if ($(id)) $(id).addEventListener('change', () => saveFiltersToSupabase());
 }
 $('stores').addEventListener('change', () => saveStoresToSupabase());
+
+// Initialize scope dropdown from localStorage; label personal view with name
+(function initScope(){
+  const sel = $('filterScope'); if (!sel) return;
+  const saved = localStorage.getItem(SCOPE_KEY) || 'shared';
+  sel.value = saved;
+  const mineOpt = sel.querySelector('option[value="mine"]');
+  if (mineOpt) mineOpt.textContent = `👤 My filters (${getDisplayName() || 'set name'})`;
+  updatePublishBtnVisibility();
+})();
+
+function updatePublishBtnVisibility(){
+  const btn = $('publishToTeamBtn'); if (!btn) return;
+  btn.hidden = getFilterScope() !== 'mine';
+}
+
+// When the user switches scope, persist + reload that scope's saved values
+$('filterScope')?.addEventListener('change', async () => {
+  try { localStorage.setItem(SCOPE_KEY, getFilterScope()); } catch {}
+  updatePublishBtnVisibility();
+  if (!sb) return;
+  const map = await sbLoadSettings();
+  applyFiltersFromMap(map);
+  // Re-apply stores selection for this scope (if list is loaded)
+  const storeIds = getStoresFromMap(map);
+  const sel = $('stores');
+  if (sel && storeIds){
+    const set = new Set(storeIds.map(String));
+    Array.from(sel.options).forEach(o => { o.selected = set.has(o.value); });
+  } else if (sel){
+    // No saved stores for this scope — clear selection
+    Array.from(sel.options).forEach(o => { o.selected = false; });
+  }
+  updateFilterBanner();
+});
+
+// "Make this the team default" — copies the current personal view to shared keys
+$('publishToTeamBtn')?.addEventListener('click', async () => {
+  if (!sb){ alert('Supabase not configured.'); return; }
+  if (!confirm('Overwrite the Team default with your current view? Everyone who uses "Team default" will switch to these filters next time they reload.')) return;
+  try {
+    const value = {};
+    for (const id of SHARED_FILTER_IDS) if ($(id)) value[id] = $(id).value;
+    await sbSaveSetting('filters', value);
+    const ids = Array.from($('stores').selectedOptions).map(o => o.value);
+    await sbSaveSetting('stores', ids);
+    log('Published your view to Team default.', 'badge-ok');
+    logActivity('Published personal view to Team default');
+  } catch (e){
+    log('Publish to team failed: ' + e.message, 'badge-warn');
+  }
+});
+
+// Keep the "My filters (NAME)" label fresh if the user changes their name
+const _origSetDisplayName = setDisplayName;
+setDisplayName = function(n){
+  _origSetDisplayName(n);
+  const sel = $('filterScope'); if (!sel) return;
+  const mineOpt = sel.querySelector('option[value="mine"]');
+  if (mineOpt) mineOpt.textContent = `👤 My filters (${getDisplayName() || 'set name'})`;
+};
 
 // ============================================================
 // Filter banner (Orders tab) — visible summary of active filters
@@ -1193,8 +1279,8 @@ $('clearMapBtn').addEventListener('click', async () => {
   // ---- Shared filters + store selection ----
   try {
     const map = await sbLoadSettings();
-    applySharedFilters(map);
-    const sharedStoreIds = applySharedStores(map);
+    applyFiltersFromMap(map);
+    const sharedStoreIds = getStoresFromMap(map);
     if (sharedStoreIds && sharedStoreIds.length){
       const p = getPrefs(); p.storeIds = sharedStoreIds;
       try { localStorage.setItem(KEY, JSON.stringify(p)); } catch {}
