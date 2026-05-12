@@ -735,7 +735,7 @@ let SORT_DIR = 'asc';
 const SELECTED_ORDERS = new Set();
 
 function previewOrders(){
-  const cols = ['Order','Customer','Ship from','Delivery','Item','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES, 'Status','Created'];
+  const cols = ['Order','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 1. Build flat rows. Sort by created_at ascending first so cumulative
   // demand is computed in the right order (oldest order eats stock first).
@@ -751,6 +751,8 @@ function previewOrders(){
       const rawSku = sv.sku_code || sv.sku || (li && (li.sku_code || li.sku)) || '';
       const title = sv.product_title || (li && li.title) || '';
       const qty = Number(li ? (li.quantity ?? li.quantity_ordered ?? 0) : 0) || 0;
+      const priceNum = Number(li ? (li.price_per_unit ?? li.unit_price ?? li.price ?? 0) : 0) || 0;
+      const discNum  = Number(li ? (li.total_discounts ?? li.discount ?? li.discount_total ?? 0) : 0) || 0;
       const itemCell = rawSku ? `${rawSku}${title?` — ${title}`:''}` : '';
       const ecom = ecomItem(rawSku);
       const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
@@ -773,7 +775,7 @@ function previewOrders(){
         orderNumber: o.number || o.id || '',
         cust, shipFrom, del,
         itemCell, ecom, rawSku, lookupSku, lookupUpc,
-        qty, codeVals, totalAvail,
+        qty, priceNum, discNum, codeVals, totalAvail,
         status: o.status || '',
         created: o.created_at || '',
         insufficient,
@@ -830,13 +832,13 @@ function previewOrders(){
       <td>${esc(r.shipFrom)}</td>
       <td>${esc(r.del)}</td>
       <td>${esc(r.itemCell)}</td>
+      <td>${r.priceNum ? '$'+r.priceNum.toFixed(2) : ''}</td>
+      <td${r.discNum?' class="badge-warn"':''}>${r.discNum ? '-$'+r.discNum.toFixed(2) : ''}</td>
       <td>${esc(r.ecom)}</td>
       <td${!r.lookupSku?' class="badge-warn"':''}>${esc(r.lookupSku)}</td>
       <td${!r.lookupUpc?' class="badge-warn"':''}>${esc(r.lookupUpc)}</td>
       <td>${r.qty}</td>
       ${codeCells}
-      <td>${esc(r.status)}</td>
-      <td>${esc(r.created)}</td>
       <td>${veeqoLinkBtn(r.orderNumber)}</td>
     </tr>`;
   }).join('');
@@ -853,12 +855,12 @@ function sortValueForCol(r, col){
     case 'Ship from': return String(r.shipFrom).toLowerCase();
     case 'Delivery':  return String(r.del).toLowerCase();
     case 'Item':      return String(r.itemCell).toLowerCase();
+    case 'Price':     return r.priceNum;
+    case 'Discount':  return r.discNum;
     case 'Ecom Item': return String(r.ecom).toLowerCase();
     case 'SKU':       return String(r.lookupSku).toLowerCase();
     case 'UPC':       return String(r.lookupUpc).toLowerCase();
     case 'Qty':       return r.qty;
-    case 'Status':    return String(r.status).toLowerCase();
-    case 'Created':   return String(r.created);
     default:          return '';
   }
 }
