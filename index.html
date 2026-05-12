@@ -47,8 +47,9 @@
   .tab-btn.active{background:var(--bg);color:var(--text);border-color:var(--line)}
   .tab-panel{display:none}
   .tab-panel.active{display:block}
-  .veeqo-link{display:inline-block;padding:3px 8px;border:1px solid var(--accent);border-radius:6px;color:var(--accent);background:transparent;text-decoration:none;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
-  .veeqo-link:hover{background:var(--accent);color:#fff}
+  .veeqo-link{display:inline-block;padding:5px 12px;border:none;border-radius:8px;background:linear-gradient(135deg,var(--accent),#7aa3ff);color:#fff;text-decoration:none;font-size:11px;font-weight:700;white-space:nowrap;cursor:pointer;box-shadow:0 1px 0 rgba(0,0,0,.2),0 2px 8px rgba(91,140,255,.25);transition:transform .12s ease,box-shadow .12s ease}
+  .veeqo-link:hover{transform:translateY(-1px);box-shadow:0 2px 0 rgba(0,0,0,.25),0 4px 14px rgba(91,140,255,.45)}
+  html[data-theme="light"] .veeqo-link{background:linear-gradient(135deg,var(--accent),#5677d6);box-shadow:0 1px 0 rgba(0,0,0,.08),0 2px 8px rgba(62,99,221,.20)}
   /* Shared-state pills — green when synced, orange when not */
   .share-ok{background:#1ec77a;color:#04140c;border:2px solid #14e388;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(20,227,136,.35),0 0 14px rgba(20,227,136,.45);text-shadow:0 1px 0 rgba(255,255,255,.25)}
   .share-warn{background:#ff8a1f;color:#1a0a00;border:2px solid #ffb347;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(255,179,71,.4),0 0 14px rgba(255,138,31,.5);text-shadow:0 1px 0 rgba(255,255,255,.25)}
@@ -75,10 +76,35 @@
   .stack>*+*{margin-top:8px}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
   .log{background:#0a0c10;border:1px solid var(--line);border-radius:6px;padding:8px;height:140px;overflow:auto;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
-  table{border-collapse:collapse;width:100%;font-size:12px}
-  th,td{padding:6px 8px;text-align:left;vertical-align:top}
-  th{background:var(--panel);position:sticky;top:0;z-index:1;color:var(--muted);font-weight:600}
-  tr:hover td{background:rgba(91,140,255,.06)}
+  /* ============ Polished Dashboard table (Option A) ============ */
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:12px}
+  th,td{padding:8px 10px;text-align:left;vertical-align:middle}
+  th{background:var(--panel);position:sticky;top:0;z-index:1;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.5px;font-size:10.5px;border-bottom:2px solid var(--accent2);box-shadow:0 1px 0 rgba(0,0,0,.25)}
+  html[data-theme="light"] th{box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  /* Zebra striping */
+  tbody tr:nth-child(even) td{background:rgba(91,140,255,.035)}
+  html[data-theme="light"] tbody tr:nth-child(even) td{background:rgba(62,99,221,.04)}
+  /* Hover lift */
+  tbody tr{transition:background .15s ease,box-shadow .15s ease}
+  tbody tr:hover td{background:rgba(91,140,255,.10)}
+  html[data-theme="light"] tbody tr:hover td{background:rgba(62,99,221,.08)}
+  /* Insufficient highlight stays distinct on top of zebra */
+  tr.row-insufficient td,tbody tr.row-insufficient:nth-child(even) td{background:rgba(245,165,36,.18) !important}
+  html[data-theme="light"] tr.row-insufficient td{background:rgba(245,165,36,.22) !important}
+  /* Customer-initial avatar */
+  .cust-cell{display:flex;align-items:center;gap:8px}
+  .cust-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-size:10px;font-weight:800;letter-spacing:.3px;flex-shrink:0;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  /* Numeric column styling */
+  .col-price{color:var(--accent2);font-weight:700;font-size:12.5px;white-space:nowrap}
+  .col-discount{white-space:nowrap}
+  .discount-pill{display:inline-block;padding:1px 7px;border-radius:999px;background:rgba(255,107,107,.14);color:var(--err);border:1px solid rgba(255,107,107,.30);font-weight:700;font-size:11px}
+  html[data-theme="light"] .discount-pill{background:rgba(194,54,59,.10);border-color:rgba(194,54,59,.30)}
+  .col-qty{color:var(--accent);font-weight:800;font-size:13px;text-align:center}
+  /* Inventory chips */
+  .inv-chip{display:inline-block;min-width:26px;padding:2px 7px;border-radius:6px;text-align:center;font-weight:700;font-size:11px}
+  .inv-have{background:rgba(58,210,159,.16);color:var(--accent2);border:1px solid rgba(58,210,159,.35)}
+  .inv-zero{background:transparent;color:var(--muted);border:1px solid var(--line);opacity:.55}
+  html[data-theme="light"] .inv-have{background:rgba(31,159,110,.12);border-color:rgba(31,159,110,.30)}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
   .grow{flex:1}
   .muted{color:var(--muted)}
@@ -884,6 +910,15 @@ function customerOf(o){
   const loc = [ship.city, ship.state || ship.region, ship.zip || ship.zip_code].filter(Boolean).join(', ');
   return loc ? `${name} — ${loc}` : name;
 }
+// Up to two initials pulled from the customer name portion (before " — city, state, zip")
+function custInitials(full){
+  const namePart = String(full||'').split(' — ')[0].trim();
+  if (!namePart) return '?';
+  const parts = namePart.split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+}
 function shipFromOf(o){
   // Try allocations[].warehouse.name first, then top-level warehouse
   const allocs = o.allocations || [];
@@ -1024,22 +1059,22 @@ function previewOrders(){
   const out = rendered.map(r => {
     const codeCells = LOCATION_CODES.map(code => {
       const v = r.codeVals[code] || 0;
-      return `<td${!v?' class="muted"':''}>${v===0?'':v}</td>`;
+      return `<td><span class="inv-chip ${v ? 'inv-have' : 'inv-zero'}">${v || 0}</span></td>`;
     }).join('');
     const checked = SELECTED_ORDERS.has(r.orderNumber) ? ' checked' : '';
     return `<tr${r.insufficient ? ' class="row-insufficient"' : ''}>
       <td><input type="checkbox" class="row-select" data-order="${esc(r.orderNumber)}" style="width:auto"${checked}/></td>
       <td>${esc(r.orderNumber)}</td>
-      <td>${esc(r.cust)}</td>
+      <td><div class="cust-cell"><span class="cust-avatar">${esc(custInitials(r.cust))}</span><span>${esc(r.cust)}</span></div></td>
       <td>${esc(r.shipFrom)}</td>
       <td>${esc(r.del)}</td>
       <td>${esc(r.itemCell)}</td>
-      <td>${r.priceNum ? '$'+r.priceNum.toFixed(2) : ''}</td>
-      <td${r.discNum?' class="badge-warn"':''}>${r.discNum ? '-$'+r.discNum.toFixed(2) : ''}</td>
+      <td class="col-price">${r.priceNum ? '$'+r.priceNum.toFixed(2) : ''}</td>
+      <td class="col-discount">${r.discNum ? `<span class="discount-pill">−$${r.discNum.toFixed(2)}</span>` : ''}</td>
       <td>${esc(r.ecom)}</td>
       <td${!r.lookupSku?' class="badge-warn"':''}>${esc(r.lookupSku)}</td>
       <td${!r.lookupUpc?' class="badge-warn"':''}>${esc(r.lookupUpc)}</td>
-      <td>${r.qty}</td>
+      <td class="col-qty">${r.qty}</td>
       ${codeCells}
       <td>${veeqoLinkBtn(r.orderNumber)}</td>
     </tr>`;
