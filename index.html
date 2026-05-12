@@ -52,8 +52,9 @@
   /* Shared-state pills — green when synced, orange when not */
   .share-ok{background:#1ec77a;color:#04140c;border:2px solid #14e388;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(20,227,136,.35),0 0 14px rgba(20,227,136,.45);text-shadow:0 1px 0 rgba(255,255,255,.25)}
   .share-warn{background:#ff8a1f;color:#1a0a00;border:2px solid #ffb347;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(255,179,71,.4),0 0 14px rgba(255,138,31,.5);text-shadow:0 1px 0 rgba(255,255,255,.25)}
-  .row-insufficient td{background:rgba(255,107,107,.10);border-left:2px solid var(--err)}
-  html[data-theme="light"] .row-insufficient td{background:rgba(194,54,59,.08)}
+  tr.row-insufficient{background:rgba(245,165,36,.14)}
+  html[data-theme="light"] tr.row-insufficient{background:rgba(245,165,36,.18)}
+  tr.row-insufficient td{background:transparent}
   th.sortable{cursor:pointer;user-select:none}
   th.sortable:hover{color:var(--accent)}
   th .sort-arrow{display:inline-block;margin-left:4px;color:var(--accent);font-size:10px}
@@ -75,7 +76,7 @@
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
   .log{background:#0a0c10;border:1px solid var(--line);border-radius:6px;padding:8px;height:140px;overflow:auto;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap}
   table{border-collapse:collapse;width:100%;font-size:12px}
-  th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+  th,td{padding:6px 8px;text-align:left;vertical-align:top}
   th{background:var(--panel);position:sticky;top:0;z-index:1;color:var(--muted);font-weight:600}
   tr:hover td{background:rgba(91,140,255,.06)}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
@@ -130,7 +131,10 @@
 
     <fieldset>
       <legend>2 · Filters</legend>
-      <div style="display:flex;justify-content:flex-end"><span class="pill" id="filtersLastUpdated" style="font-size:10px">Loading…</span></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+        <button id="shareFiltersBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Share filters now</button>
+        <span class="pill" id="filtersLastUpdated" style="font-size:10px">Loading…</span>
+      </div>
       <div class="row">
         <div><label>Created from</label><input id="fromDate" type="date"/></div>
         <div><label>Created to</label><input id="toDate" type="date"/></div>
@@ -391,8 +395,13 @@ function applySharedFilters(map){
     for (const id of SHARED_FILTER_IDS){
       if (f.value[id] != null && $(id)) $(id).value = f.value[id];
     }
+    setLastUpdated('filtersLastUpdated', f);
+  } else {
+    // No shared row yet — seed Supabase with current local values so
+    // the team starts from the same baseline. Pill flips to ✓ immediately.
+    setLastUpdated('filtersLastUpdated', null);
+    saveFiltersToSupabase();
   }
-  setLastUpdated('filtersLastUpdated', f || null);
 }
 function applySharedStores(map){
   // Selection applied after stores list is loaded — see loadStores().
@@ -416,6 +425,27 @@ for (const id of SHARED_FILTER_IDS){
   if ($(id)) $(id).addEventListener('change', () => saveFiltersToSupabase());
 }
 $('stores').addEventListener('change', () => saveStoresToSupabase());
+
+// Manual "Share filters now" — pushes filters + stores together and gives feedback
+$('shareFiltersBtn').addEventListener('click', async () => {
+  if (!sb){
+    alert('Supabase not configured — check the Log panel.');
+    return;
+  }
+  const btn = $('shareFiltersBtn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sharing…';
+  try {
+    await saveFiltersToSupabase();
+    await saveStoresToSupabase();
+    log('Filters + store selection shared with the team.', 'badge-ok');
+  } catch (err) {
+    log('Share filters failed: ' + err.message, 'badge-warn');
+    alert('Share failed: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = orig;
+  }
+});
 
 // Warn if opened via file:// (CORS will silently kill direct API calls)
 if (location.protocol === 'file:') {
