@@ -2187,16 +2187,14 @@ function buildNavSORows(){
     }
   }
 
-  // Sort: SKU ASC, then bin priority order, then net unit price ASC
-  const priorityIndex = Object.fromEntries(NAV_SO_PRIORITY.map((c,i)=>[c,i]));
+  // Sort: Location Code ASC, then SKU ASC, then net unit price ASC
   const entries = [...buckets.entries()].map(([key, qty]) => {
     const [sku, code, netStr] = key.split('|');
     return { sku, code, netUnit: Number(netStr), qty };
   });
   entries.sort((a,b) => {
-    if (a.sku !== b.sku) return a.sku.localeCompare(b.sku);
-    const pa = priorityIndex[a.code] ?? 99, pb = priorityIndex[b.code] ?? 99;
-    if (pa !== pb) return pa - pb;
+    if (a.code !== b.code) return a.code.localeCompare(b.code);
+    if (a.sku  !== b.sku ) return a.sku.localeCompare(b.sku);
     return a.netUnit - b.netUnit;
   });
   return entries.map(e => ({
