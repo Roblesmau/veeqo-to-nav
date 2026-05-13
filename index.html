@@ -2166,7 +2166,9 @@ function buildNavSORows(){
       if (!needed) continue;
       const price = Number(li.price_per_unit ?? li.unit_price ?? li.price ?? 0) || 0;
       const disc  = Number(li.total_discounts ?? li.discount ?? li.discount_total ?? 0) || 0;
-      const netUnit = +(price - (needed ? disc / needed : 0)).toFixed(2);
+      // Net Price Paid is per-unit (matches the Orders table columns).
+      // No qty-multiplication — Quantity stays separate in its own column.
+      const netUnit = +(price - disc).toFixed(2);
       const rem = getRemaining(localSku);
 
       // Allocate this line item across bins in priority order
