@@ -2118,16 +2118,22 @@ $('exportNavBtn').addEventListener('click', () => {
 });
 
 // =========================================================
-// Nav SO export — Type | No. | Location Code | Quantity
+// Nav SO export — Type | No. | Location Code | Quantity | Net Price Paid
 // Aggregates ordered qty per SKU across all orders, then allocates
 // against bin stock in priority order: BIN-ECAMZ -> BIN-VIN -> DE-MAIN.
 // DE-MAIN absorbs any remaining qty if BIN-ECAMZ + BIN-VIN run out.
+// Net Price Paid = weighted-average per-unit (price - discount) across
+// all line items contributing to that SKU. Applied uniformly to every
+// allocation row for the SKU.
 // =========================================================
 const NAV_SO_PRIORITY = ['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN'];
 
 function buildNavSORows(){
-  // 1. Sum ordered qty per local SKU across all orders
-  const orderedBySku = {};
+  // 1. Sum ordered qty + total net dollars per local SKU across all orders.
+  //    Net dollars = qty * price_per_unit - total_discounts (line-level).
+  //    Net per-unit = net_dollars / qty (weighted average if multiple lines).
+  const orderedBySku = {};   // sku -> qty
+  const netDollarsBySku = {};// sku -> sum of (qty*price - total_discount)
   for (const o of ORDERS){
     for (const li of (o.line_items || [])){
       const sv = li.sellable || li.product || {};
@@ -2136,15 +2142,20 @@ function buildNavSORows(){
       const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
       const localSku = m ? m.sku : '';
       if (!localSku) continue; // skip unmapped — no SKU to allocate
-      const qty = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+      const qty   = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
       if (!qty) continue;
-      orderedBySku[localSku] = (orderedBySku[localSku] || 0) + qty;
+      const price = Number(li.price_per_unit ?? li.unit_price ?? li.price ?? 0) || 0;
+      const disc  = Number(li.total_discounts ?? li.discount ?? li.discount_total ?? 0) || 0;
+      orderedBySku[localSku]    = (orderedBySku[localSku] || 0) + qty;
+      netDollarsBySku[localSku] = (netDollarsBySku[localSku] || 0) + (qty * price - disc);
     }
   }
   // 2. Allocate by priority: BIN-ECAMZ -> BIN-VIN -> DE-MAIN
   const rows = [];
   for (const sku of Object.keys(orderedBySku).sort()){
     let needed = orderedBySku[sku];
+    const totalQty = orderedBySku[sku];
+    const netUnit = totalQty ? +(netDollarsBySku[sku] / totalQty).toFixed(2) : 0;
     const binEntry = BIN_MAP[cleanItem(sku)] || null;
     for (let i = 0; i < NAV_SO_PRIORITY.length; i++){
       if (needed <= 0) break;
@@ -2153,7 +2164,7 @@ function buildNavSORows(){
       const available = (binEntry && binEntry.byCode && Number(binEntry.byCode[code])) || 0;
       const take = isLast ? needed : Math.min(needed, available);
       if (take > 0){
-        rows.push({ Type: 'Item', 'No.': sku, 'Location Code': code, Quantity: take });
+        rows.push({ Type: 'Item', 'No.': sku, 'Location Code': code, Quantity: take, 'Net Price Paid': netUnit });
         needed -= take;
       }
     }
@@ -2165,7 +2176,7 @@ $('exportNavSOBtn').addEventListener('click', () => {
   if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
   const rows = buildNavSORows();
   if (!rows.length){ alert('Nothing to export — no mapped SKUs in the current orders.'); return; }
-  const header = ['Type','No.','Location Code','Quantity'];
+  const header = ['Type','No.','Location Code','Quantity','Net Price Paid'];
   const ws = XLSX.utils.json_to_sheet(rows, { header });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Nav SO');
