@@ -2119,57 +2119,91 @@ $('exportNavBtn').addEventListener('click', () => {
 
 // =========================================================
 // Nav SO export — Type | No. | Location Code | Quantity | Net Price Paid
-// Aggregates ordered qty per SKU across all orders, then allocates
-// against bin stock in priority order: BIN-ECAMZ -> BIN-VIN -> DE-MAIN.
-// DE-MAIN absorbs any remaining qty if BIN-ECAMZ + BIN-VIN run out.
-// Net Price Paid = weighted-average per-unit (price - discount) across
-// all line items contributing to that SKU. Applied uniformly to every
-// allocation row for the SKU.
+// Per-line-item allocation: each Veeqo line item is allocated to bins
+// in priority order (BIN-ECAMZ -> BIN-VIN -> DE-MAIN), decrementing
+// the SKU's available stock as we go. DE-MAIN absorbs any remainder.
+// Identical (sku, location, net unit price) results are then summed
+// so the export has ONE row per unique combination.
+//
+// Result: SKUs ordered at different unit prices produce SEPARATE rows
+// per (sku, location, price), preserving the actual prices customers
+// paid instead of an aggregated weighted average.
+//
+// Orders are processed in created_at ASC so the allocation matches
+// the Orders tab's "oldest first" cumulative-demand model.
 // =========================================================
 const NAV_SO_PRIORITY = ['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN'];
 
 function buildNavSORows(){
-  // 1. Sum ordered qty + total net dollars per local SKU across all orders.
-  //    Net dollars = qty * price_per_unit - total_discounts (line-level).
-  //    Net per-unit = net_dollars / qty (weighted average if multiple lines).
-  const orderedBySku = {};   // sku -> qty
-  const netDollarsBySku = {};// sku -> sum of (qty*price - total_discount)
-  for (const o of ORDERS){
+  // Per-SKU remaining stock at each bin (decremented as we allocate)
+  const remaining = {}; // sku -> { [code]: qty }
+  function getRemaining(sku){
+    if (!remaining[sku]){
+      const binEntry = BIN_MAP[cleanItem(sku)] || null;
+      remaining[sku] = {};
+      for (const c of NAV_SO_PRIORITY){
+        remaining[sku][c] = (binEntry && binEntry.byCode && Number(binEntry.byCode[c])) || 0;
+      }
+    }
+    return remaining[sku];
+  }
+
+  // Aggregation bucket keyed by sku|code|netUnit -> summed qty
+  const buckets = new Map();
+
+  const sortedOrders = [...ORDERS].sort((a,b) =>
+    String(a.created_at||'').localeCompare(String(b.created_at||'')));
+
+  for (const o of sortedOrders){
     for (const li of (o.line_items || [])){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
       const ecom = ecomItem(rawSku);
       const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
       const localSku = m ? m.sku : '';
-      if (!localSku) continue; // skip unmapped — no SKU to allocate
-      const qty   = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
-      if (!qty) continue;
+      if (!localSku) continue; // skip unmapped
+      let needed = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+      if (!needed) continue;
       const price = Number(li.price_per_unit ?? li.unit_price ?? li.price ?? 0) || 0;
       const disc  = Number(li.total_discounts ?? li.discount ?? li.discount_total ?? 0) || 0;
-      orderedBySku[localSku]    = (orderedBySku[localSku] || 0) + qty;
-      netDollarsBySku[localSku] = (netDollarsBySku[localSku] || 0) + (qty * price - disc);
-    }
-  }
-  // 2. Allocate by priority: BIN-ECAMZ -> BIN-VIN -> DE-MAIN
-  const rows = [];
-  for (const sku of Object.keys(orderedBySku).sort()){
-    let needed = orderedBySku[sku];
-    const totalQty = orderedBySku[sku];
-    const netUnit = totalQty ? +(netDollarsBySku[sku] / totalQty).toFixed(2) : 0;
-    const binEntry = BIN_MAP[cleanItem(sku)] || null;
-    for (let i = 0; i < NAV_SO_PRIORITY.length; i++){
-      if (needed <= 0) break;
-      const code = NAV_SO_PRIORITY[i];
-      const isLast = i === NAV_SO_PRIORITY.length - 1;
-      const available = (binEntry && binEntry.byCode && Number(binEntry.byCode[code])) || 0;
-      const take = isLast ? needed : Math.min(needed, available);
-      if (take > 0){
-        rows.push({ Type: 'Item', 'No.': sku, 'Location Code': code, Quantity: take, 'Net Price Paid': netUnit });
-        needed -= take;
+      const netUnit = +(price - (needed ? disc / needed : 0)).toFixed(2);
+      const rem = getRemaining(localSku);
+
+      // Allocate this line item across bins in priority order
+      for (let i = 0; i < NAV_SO_PRIORITY.length && needed > 0; i++){
+        const code = NAV_SO_PRIORITY[i];
+        const isLast = i === NAV_SO_PRIORITY.length - 1;
+        const avail = rem[code] || 0;
+        const take = isLast ? needed : Math.min(needed, avail);
+        if (take > 0){
+          const key = `${localSku}|${code}|${netUnit}`;
+          buckets.set(key, (buckets.get(key) || 0) + take);
+          rem[code] = Math.max(0, avail - take);
+          needed -= take;
+        }
       }
     }
   }
-  return rows;
+
+  // Sort: SKU ASC, then bin priority order, then net unit price ASC
+  const priorityIndex = Object.fromEntries(NAV_SO_PRIORITY.map((c,i)=>[c,i]));
+  const entries = [...buckets.entries()].map(([key, qty]) => {
+    const [sku, code, netStr] = key.split('|');
+    return { sku, code, netUnit: Number(netStr), qty };
+  });
+  entries.sort((a,b) => {
+    if (a.sku !== b.sku) return a.sku.localeCompare(b.sku);
+    const pa = priorityIndex[a.code] ?? 99, pb = priorityIndex[b.code] ?? 99;
+    if (pa !== pb) return pa - pb;
+    return a.netUnit - b.netUnit;
+  });
+  return entries.map(e => ({
+    Type: 'Item',
+    'No.': e.sku,
+    'Location Code': e.code,
+    Quantity: e.qty,
+    'Net Price Paid': e.netUnit,
+  }));
 }
 
 $('exportNavSOBtn').addEventListener('click', () => {
