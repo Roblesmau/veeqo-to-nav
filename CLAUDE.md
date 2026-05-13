@@ -49,7 +49,7 @@ Same domain → no CORS, no second platform.
 
 - Items file is uploaded to Supabase as a **slim 3-column CSV** (Local SKU, Ecom SKU, UPC). Never upload the full XLSX — it hits the 50 MB Storage cap.
 - Orders are processed in `created_at ASC` for cumulative-demand / insufficient-stock detection.
-- Nav SO export priority order: `['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN']`.
+- Nav SO export priority order: `['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN']`. Allocation is **strict** — every bin (including DE-MAIN) respects its actual available stock. Unfulfillable qty is surfaced in a pre-download confirm modal and is excluded from the export rather than dumped into DE-MAIN.
 - Zone Code column is the source of truth for zone filtering; Bin Code is a fallback heuristic.
 
 ### Veeqo integration

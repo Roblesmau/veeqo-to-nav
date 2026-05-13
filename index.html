@@ -2135,7 +2135,9 @@ $('exportNavBtn').addEventListener('click', () => {
 const NAV_SO_PRIORITY = ['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN'];
 
 function buildNavSORows(){
-  // Per-SKU remaining stock at each bin (decremented as we allocate)
+  // Per-SKU remaining stock at each bin (decremented as we allocate).
+  // Strict: every bin (including DE-MAIN) respects its actual availability.
+  // Unfulfillable qty is tracked so we can warn the user before download.
   const remaining = {}; // sku -> { [code]: qty }
   function getRemaining(sku){
     if (!remaining[sku]){
@@ -2148,8 +2150,16 @@ function buildNavSORows(){
     return remaining[sku];
   }
 
-  // Aggregation bucket keyed by sku|code|netUnit -> summed qty
-  const buckets = new Map();
+  const buckets = new Map();                 // sku|code|netUnit -> qty
+  const unfulfilled = new Map();             // sku -> { needed, allocated, ecom }
+  function trackUnfulfilled(sku, ecom, needed, allocated){
+    if (needed <= allocated) return;
+    const e = unfulfilled.get(sku) || { sku, ecom, needed:0, allocated:0 };
+    e.needed    += needed;
+    e.allocated += allocated;
+    e.ecom = e.ecom || ecom;
+    unfulfilled.set(sku, e);
+  }
 
   const sortedOrders = [...ORDERS].sort((a,b) =>
     String(a.created_at||'').localeCompare(String(b.created_at||'')));
@@ -2164,26 +2174,27 @@ function buildNavSORows(){
       if (!localSku) continue; // skip unmapped
       let needed = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
       if (!needed) continue;
+      const originalNeeded = needed;
       const price = Number(li.price_per_unit ?? li.unit_price ?? li.price ?? 0) || 0;
       const disc  = Number(li.total_discounts ?? li.discount ?? li.discount_total ?? 0) || 0;
-      // Net Price Paid is per-unit (matches the Orders table columns).
-      // No qty-multiplication — Quantity stays separate in its own column.
       const netUnit = +(price - disc).toFixed(2);
       const rem = getRemaining(localSku);
 
-      // Allocate this line item across bins in priority order
+      // Strict allocation — every bin respects its real available stock.
+      let allocated = 0;
       for (let i = 0; i < NAV_SO_PRIORITY.length && needed > 0; i++){
         const code = NAV_SO_PRIORITY[i];
-        const isLast = i === NAV_SO_PRIORITY.length - 1;
         const avail = rem[code] || 0;
-        const take = isLast ? needed : Math.min(needed, avail);
+        const take = Math.min(needed, avail);
         if (take > 0){
           const key = `${localSku}|${code}|${netUnit}`;
           buckets.set(key, (buckets.get(key) || 0) + take);
-          rem[code] = Math.max(0, avail - take);
+          rem[code] = avail - take;
           needed -= take;
+          allocated += take;
         }
       }
+      trackUnfulfilled(localSku, ecom, originalNeeded, allocated);
     }
   }
 
@@ -2197,19 +2208,45 @@ function buildNavSORows(){
     if (a.sku  !== b.sku ) return a.sku.localeCompare(b.sku);
     return a.netUnit - b.netUnit;
   });
-  return entries.map(e => ({
+  const rows = entries.map(e => ({
     Type: 'Item',
     'No.': e.sku,
     'Location Code': e.code,
     Quantity: e.qty,
     'Net Price Paid': e.netUnit,
   }));
+  return { rows, unfulfilled: [...unfulfilled.values()] };
 }
 
 $('exportNavSOBtn').addEventListener('click', () => {
   if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
-  const rows = buildNavSORows();
-  if (!rows.length){ alert('Nothing to export — no mapped SKUs in the current orders.'); return; }
+  const { rows, unfulfilled } = buildNavSORows();
+  if (!rows.length && !unfulfilled.length){
+    alert('Nothing to export — no mapped SKUs in the current orders.');
+    return;
+  }
+
+  // Warn modal if anything couldn't be fully allocated against real stock.
+  if (unfulfilled.length){
+    const totalShort = unfulfilled.reduce((s, u) => s + (u.needed - u.allocated), 0);
+    const skuList = unfulfilled.slice(0, 20).map(u => {
+      const short = u.needed - u.allocated;
+      const ecomBit = u.ecom ? ` (${u.ecom})` : '';
+      return `• ${u.sku}${ecomBit} — needed ${u.needed}, available ${u.allocated}, short ${short}`;
+    }).join('\n');
+    const extra = unfulfilled.length > 20 ? `\n…and ${unfulfilled.length-20} more` : '';
+    const msg = `⚠ ${unfulfilled.length} SKU${unfulfilled.length===1?'':'s'} cannot be fully allocated against current bin stock (${totalShort} unit${totalShort===1?'':'s'} short total). These will NOT appear in the Nav SO export.\n\n${skuList}${extra}\n\nDownload the export anyway? (Unfulfillable items are excluded; only what's actually available is exported.)`;
+    if (!confirm(msg)){
+      log(`Nav SO export cancelled — ${unfulfilled.length} SKU(s) with insufficient stock.`, 'badge-warn');
+      return;
+    }
+    log(`Nav SO export: ${unfulfilled.length} SKU(s) excluded for insufficient stock (${totalShort} unit${totalShort===1?'':'s'} short).`, 'badge-warn');
+  }
+
+  if (!rows.length){
+    alert('Nothing to export — all items have zero stock across all bins.');
+    return;
+  }
   const header = ['Type','No.','Location Code','Quantity','Net Price Paid'];
   const ws = XLSX.utils.json_to_sheet(rows, { header });
   const wb = XLSX.utils.book_new();
