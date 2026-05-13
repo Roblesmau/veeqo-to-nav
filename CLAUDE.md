@@ -50,6 +50,7 @@ Same domain → no CORS, no second platform.
 - Items file is uploaded to Supabase as a **slim 3-column CSV** (Local SKU, Ecom SKU, UPC). Never upload the full XLSX — it hits the 50 MB Storage cap.
 - Orders are processed in `created_at ASC` for cumulative-demand / insufficient-stock detection.
 - Nav SO export priority order: `['BIN-ECAMZ', 'BIN-VIN', 'DE-MAIN']`. Allocation is **strict** — every bin (including DE-MAIN) respects its actual available stock. Unfulfillable qty is surfaced in a pre-download confirm modal and is excluded from the export rather than dumped into DE-MAIN.
+- Nav SO export schema: `Type | No. | Location Code | Quantity | Net Price Paid`. Bucket key is `(SKU, Location, NetUnitPrice)` so different unit prices for the same SKU+location produce **separate rows**. `Net Price Paid` is per-unit (`price_per_unit - total_discounts`, treated as already per-unit — do not divide by qty). Rows sorted by Location Code asc, then SKU, then price.
 - Zone Code column is the source of truth for zone filtering; Bin Code is a fallback heuristic.
 
 ### Veeqo integration
@@ -78,6 +79,15 @@ Things to re-check after touching the orders pipeline:
 - Insufficient-stock highlighting + filter toggle still work.
 - Sort arrows (▲/▼) still match the active column.
 - Bulk-select copy-to-clipboard still works.
+
+---
+
+## Best practices (lessons from this repo)
+
+- **Verify allocation bugs against real exports.** When the user reports "this SKU shouldn't be in the export," dump the actual xlsx (temp-install `xlsx` with `npm i xlsx --no-save`, write a tiny `.cjs` dumper, then **clean up** `node_modules`/`package-lock.json`/the script). Faster than guessing.
+- **Prefer "strict + warn" over silent fallback.** If a rule (e.g. bin priority) could mask missing data, surface it in a confirm modal listing the affected SKUs before letting the user download. Never quietly dump remainder into the last bucket.
+- **Orthogonal rules stay orthogonal.** Price-stamping (per-unit Net Price) and qty allocation (bin priority + stock cap) are independent — keep them in independent passes so an edge case in one doesn't bleed into the other.
+- **Bucket keys carry every distinguishing dimension.** When the same SKU can have different prices in the same location, the aggregation key must include price; otherwise rows collapse and information is lost.
 
 ---
 
