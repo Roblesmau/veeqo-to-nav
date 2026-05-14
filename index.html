@@ -333,6 +333,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
+        <button id="exportOrderByLocBtn" class="ok" style="width:auto;padding:6px 14px;background:#7a4dff;color:white" title="Same data as Nav SO, but one row per order — sorted by Location Code then Order">Export to Order by Loc</button>
         <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
         <span class="pill" id="lastFetched" title="Time of the last successful fetch">Never fetched</span>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
@@ -2236,6 +2237,131 @@ function buildNavSORows(){
   }));
   return { rows, unfulfilled: [...unfulfilled.values()] };
 }
+
+// =========================================================
+// Order by Loc export — Order Number | Type | No. | Location Code | Quantity | Net Price Paid
+// Same strict bin allocation as Nav SO (priority BIN-ECAMZ → BIN-VIN → DE-MAIN,
+// processed in created_at ASC, every bin respects real stock), but rows are
+// NOT collapsed across orders — bucket key includes the order number, so each
+// order keeps its own line(s). Useful for picking by location while keeping
+// per-order traceability.
+// =========================================================
+function buildOrderByLocRows(){
+  const remaining = {};
+  function getRemaining(sku){
+    if (!remaining[sku]){
+      const binEntry = BIN_MAP[cleanItem(sku)] || null;
+      remaining[sku] = {};
+      for (const c of NAV_SO_PRIORITY){
+        remaining[sku][c] = (binEntry && binEntry.byCode && Number(binEntry.byCode[c])) || 0;
+      }
+    }
+    return remaining[sku];
+  }
+
+  const buckets = new Map(); // order|sku|code|netUnit -> qty
+  const unfulfilled = new Map();
+  function trackUnfulfilled(sku, ecom, needed, allocated){
+    if (needed <= allocated) return;
+    const e = unfulfilled.get(sku) || { sku, ecom, needed:0, allocated:0 };
+    e.needed    += needed;
+    e.allocated += allocated;
+    e.ecom = e.ecom || ecom;
+    unfulfilled.set(sku, e);
+  }
+
+  const sortedOrders = [...ORDERS].sort((a,b) =>
+    String(a.created_at||'').localeCompare(String(b.created_at||'')));
+
+  for (const o of sortedOrders){
+    const orderNum = String(o.number || o.order_number || o.id || '');
+    for (const li of (o.line_items || [])){
+      const sv = li.sellable || li.product || {};
+      const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
+      const ecom = ecomItem(rawSku);
+      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const localSku = m ? m.sku : '';
+      if (!localSku) continue;
+      let needed = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
+      if (!needed) continue;
+      const originalNeeded = needed;
+      const price = Number(li.price_per_unit ?? li.unit_price ?? li.price ?? 0) || 0;
+      const disc  = Number(li.total_discounts ?? li.discount ?? li.discount_total ?? 0) || 0;
+      const netUnit = +(price - disc).toFixed(2);
+      const rem = getRemaining(localSku);
+
+      let allocated = 0;
+      for (let i = 0; i < NAV_SO_PRIORITY.length && needed > 0; i++){
+        const code = NAV_SO_PRIORITY[i];
+        const avail = rem[code] || 0;
+        const take = Math.min(needed, avail);
+        if (take > 0){
+          const key = `${orderNum}|${localSku}|${code}|${netUnit}`;
+          buckets.set(key, (buckets.get(key) || 0) + take);
+          rem[code] = avail - take;
+          needed -= take;
+          allocated += take;
+        }
+      }
+      trackUnfulfilled(localSku, ecom, originalNeeded, allocated);
+    }
+  }
+
+  // Sort: Location Code ASC, then Order Number ASC, then SKU ASC, then price ASC
+  const entries = [...buckets.entries()].map(([key, qty]) => {
+    const [order, sku, code, netStr] = key.split('|');
+    return { order, sku, code, netUnit: Number(netStr), qty };
+  });
+  entries.sort((a,b) => {
+    if (a.code  !== b.code ) return a.code.localeCompare(b.code);
+    if (a.order !== b.order) return a.order.localeCompare(b.order);
+    if (a.sku   !== b.sku  ) return a.sku.localeCompare(b.sku);
+    return a.netUnit - b.netUnit;
+  });
+  const rows = entries.map(e => ({
+    'Order Number': e.order,
+    Type: 'Item',
+    'No.': e.sku,
+    'Location Code': e.code,
+    Quantity: e.qty,
+    'Net Price Paid': e.netUnit,
+  }));
+  return { rows, unfulfilled: [...unfulfilled.values()] };
+}
+
+$('exportOrderByLocBtn').addEventListener('click', () => {
+  if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
+  const { rows, unfulfilled } = buildOrderByLocRows();
+  if (!rows.length && !unfulfilled.length){
+    alert('Nothing to export — no mapped SKUs in the current orders.');
+    return;
+  }
+  if (unfulfilled.length){
+    const totalShort = unfulfilled.reduce((s, u) => s + (u.needed - u.allocated), 0);
+    const skuList = unfulfilled.slice(0, 20).map(u => {
+      const short = u.needed - u.allocated;
+      const ecomBit = u.ecom ? ` (${u.ecom})` : '';
+      return `• ${u.sku}${ecomBit} — needed ${u.needed}, available ${u.allocated}, short ${short}`;
+    }).join('\n');
+    const extra = unfulfilled.length > 20 ? `\n…and ${unfulfilled.length-20} more` : '';
+    const msg = `⚠ ${unfulfilled.length} SKU${unfulfilled.length===1?'':'s'} cannot be fully allocated against current bin stock (${totalShort} unit${totalShort===1?'':'s'} short total). These will NOT appear in the export.\n\n${skuList}${extra}\n\nDownload the export anyway?`;
+    if (!confirm(msg)){
+      log(`Order by Loc export cancelled — ${unfulfilled.length} SKU(s) with insufficient stock.`, 'badge-warn');
+      return;
+    }
+    log(`Order by Loc export: ${unfulfilled.length} SKU(s) excluded for insufficient stock (${totalShort} unit${totalShort===1?'':'s'} short).`, 'badge-warn');
+  }
+  if (!rows.length){
+    alert('Nothing to export — all items have zero stock across all bins.');
+    return;
+  }
+  const header = ['Order Number','Type','No.','Location Code','Quantity','Net Price Paid'];
+  const ws = XLSX.utils.json_to_sheet(rows, { header });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Order by Loc');
+  XLSX.writeFile(wb, `order-by-loc-${stamp()}.xlsx`);
+  log(`Order by Loc export: ${rows.length} rows downloaded.`, 'badge-ok');
+});
 
 $('exportNavSOBtn').addEventListener('click', () => {
   if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
