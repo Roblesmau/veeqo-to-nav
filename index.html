@@ -2260,6 +2260,7 @@ function buildOrderByLocRows(){
   }
 
   const buckets = new Map(); // order|sku|code|netUnit -> qty
+  const skuMeta = new Map(); // localSku -> { upc, ecom }
   const unfulfilled = new Map();
   function trackUnfulfilled(sku, ecom, needed, allocated){
     if (needed <= allocated) return;
@@ -2282,6 +2283,9 @@ function buildOrderByLocRows(){
       const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
       const localSku = m ? m.sku : '';
       if (!localSku) continue;
+      if (!skuMeta.has(localSku)){
+        skuMeta.set(localSku, { upc: (m && m.upc) || '', ecom: ecom || '' });
+      }
       let needed = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
       if (!needed) continue;
       const originalNeeded = needed;
@@ -2318,14 +2322,19 @@ function buildOrderByLocRows(){
     if (a.sku   !== b.sku  ) return a.sku.localeCompare(b.sku);
     return a.netUnit - b.netUnit;
   });
-  const rows = entries.map(e => ({
-    'Order Number': e.order,
-    Type: 'Item',
-    'No.': e.sku,
-    'Location Code': e.code,
-    Quantity: e.qty,
-    'Net Price Paid': e.netUnit,
-  }));
+  const rows = entries.map(e => {
+    const meta = skuMeta.get(e.sku) || { upc:'', ecom:'' };
+    return {
+      'Order Number': e.order,
+      Type: 'Item',
+      'No.': e.sku,
+      'Ecom Item': meta.ecom,
+      'UPC': meta.upc,
+      'Location Code': e.code,
+      Quantity: e.qty,
+      'Net Price Paid': e.netUnit,
+    };
+  });
   return { rows, unfulfilled: [...unfulfilled.values()] };
 }
 
@@ -2355,7 +2364,7 @@ $('exportOrderByLocBtn').addEventListener('click', () => {
     alert('Nothing to export — all items have zero stock across all bins.');
     return;
   }
-  const header = ['Order Number','Type','No.','Location Code','Quantity','Net Price Paid'];
+  const header = ['Order Number','Type','No.','Ecom Item','UPC','Location Code','Quantity','Net Price Paid'];
   const ws = XLSX.utils.json_to_sheet(rows, { header });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Order by Loc');
