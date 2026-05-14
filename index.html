@@ -1021,12 +1021,20 @@ function previewOrders(){
   }
 
   // 2. Apply text filter
+  // Scanners sometimes prepend leading zeros to UPCs (e.g. "09856" on the
+  // barcode while the database has "9856"). So we also try a leading-zero-
+  // stripped version of both the needle and the UPC haystack.
   const filter = ($('filterText') ? $('filterText').value : '').trim().toLowerCase();
+  const stripZeros = s => String(s||'').replace(/^0+(?=\d)/, '');
+  const filterNoZ = stripZeros(filter);
   let filtered = flat;
   if (filter){
     filtered = filtered.filter(r => {
-      const hay = [r.orderNumber, r.cust, r.ecom, r.lookupSku, r.rawSku, r.lookupUpc].join(' ').toLowerCase();
-      return hay.includes(filter);
+      const upc = String(r.lookupUpc || '');
+      const hay = [r.orderNumber, r.cust, r.ecom, r.lookupSku, r.rawSku, upc, stripZeros(upc)].join(' ').toLowerCase();
+      if (hay.includes(filter)) return true;
+      if (filterNoZ && filterNoZ !== filter && hay.includes(filterNoZ)) return true;
+      return false;
     });
   }
 
@@ -1932,7 +1940,18 @@ function renderResult(){
   const cols = ['order_number','customer','ship_from','delivery','item_raw','ecom_item','item_cleaned','title','quantity','upc','local_sku','stock_total', ...codeCols, 'match','price','order_status','created_at'];
   $('resultHead').innerHTML = cols.map(c=>`<th>${c}</th>`).join('') + '<th>Action</th>';
   const filter = $('filterText').value.toLowerCase();
-  const rows = RESULT.filter(r => !filter || cols.some(c => String(r[c]).toLowerCase().includes(filter)));
+  // Strip leading zeros so scans like "09856" still match a stored UPC of "9856".
+  const stripZeros = s => String(s||'').replace(/^0+(?=\d)/, '');
+  const filterNoZ = stripZeros(filter);
+  const rows = RESULT.filter(r => {
+    if (!filter) return true;
+    return cols.some(c => {
+      const v = String(r[c]).toLowerCase();
+      if (v.includes(filter)) return true;
+      if (filterNoZ && filterNoZ !== filter && (v.includes(filterNoZ) || stripZeros(v).includes(filterNoZ))) return true;
+      return false;
+    });
+  });
   $('resultBody').innerHTML = rows.slice(0,2000).map(r =>
     `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_number)}</td></tr>`
   ).join('');
