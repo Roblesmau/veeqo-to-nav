@@ -339,6 +339,9 @@
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
           <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
         </label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="When checked, clicking Export to Nav SO also generates the Order by Loc file (one row per order) for count & control.">
+          <input id="exportCountControl" type="checkbox" style="width:auto"/> Export File for Count &amp; Control
+        </label>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="Show only rows where ordered Qty exceeds the total stock across all locations">
           <input id="insufficientOnly" type="checkbox" style="width:auto"/> Insufficient stock only
         </label>
@@ -2407,7 +2410,31 @@ $('exportNavSOBtn').addEventListener('click', () => {
   XLSX.utils.book_append_sheet(wb, ws, 'Nav SO');
   XLSX.writeFile(wb, `nav-so-${stamp()}.xlsx`);
   log(`Nav SO export: ${rows.length} allocation rows downloaded (priority BIN-ECAMZ → BIN-VIN → DE-MAIN).`, 'badge-ok');
+
+  // Companion file for count & control: same data as Order by Loc (per-order rows).
+  // Reuses the unfulfillable confirmation the user already accepted above — no second prompt.
+  if ($('exportCountControl') && $('exportCountControl').checked){
+    const { rows: ocRows } = buildOrderByLocRows();
+    if (ocRows.length){
+      const ocHeader = ['Order Number','Type','No.','Ecom Item','UPC','Location Code','Quantity','Net Price Paid'];
+      const ocWs = XLSX.utils.json_to_sheet(ocRows, { header: ocHeader });
+      const ocWb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(ocWb, ocWs, 'Order by Loc');
+      XLSX.writeFile(ocWb, `count-control-${stamp()}.xlsx`);
+      log(`Count & Control file: ${ocRows.length} per-order rows downloaded.`, 'badge-ok');
+    }
+  }
 });
+
+// Persist the Count & Control checkbox.
+(function(){
+  const cb = $('exportCountControl');
+  if (!cb) return;
+  try { cb.checked = localStorage.getItem('exportCountControl') === '1'; } catch(_){}
+  cb.addEventListener('change', () => {
+    try { localStorage.setItem('exportCountControl', cb.checked ? '1' : '0'); } catch(_){}
+  });
+})();
 
 </script>
 </body>
