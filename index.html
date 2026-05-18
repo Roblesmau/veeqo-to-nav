@@ -1985,11 +1985,14 @@ $('clearFilterBtn').addEventListener('click', () => {
 $('insufficientOnly').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
 
 // Filter input: pressing Enter (typical end-of-scan signal from a barcode
-// scanner) selects all the text so the next scan replaces it cleanly.
+// scanner) selects all the text so the next scan replaces it cleanly, and
+// also re-fetches orders from Veeqo so status changes elsewhere are picked up.
 $('filterText').addEventListener('keydown', (e) => {
   if (e.key === 'Enter'){
     e.preventDefault();
     e.target.select();
+    const btn = $('fetchBtn');
+    if (btn && !btn.disabled) btn.click();
   }
 });
 
