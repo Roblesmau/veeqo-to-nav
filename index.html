@@ -340,7 +340,7 @@
           <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
         </label>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="When checked, clicking Export to Nav SO also generates the Order by Loc file (one row per order) for count & control.">
-          <input id="exportCountControl" type="checkbox" style="width:auto"/> Export File for Count &amp; Control
+          <input id="exportCountControl" type="checkbox" checked style="width:auto"/> Export File for Count &amp; Control
         </label>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="Show only rows where ordered Qty exceeds the total stock across all locations">
           <input id="insufficientOnly" type="checkbox" style="width:auto"/> Insufficient stock only
@@ -2430,7 +2430,11 @@ $('exportNavSOBtn').addEventListener('click', () => {
 (function(){
   const cb = $('exportCountControl');
   if (!cb) return;
-  try { cb.checked = localStorage.getItem('exportCountControl') === '1'; } catch(_){}
+  // Default ON: if the user has never explicitly set it, start checked.
+  try {
+    const stored = localStorage.getItem('exportCountControl');
+    cb.checked = stored === null ? true : stored === '1';
+  } catch(_){ cb.checked = true; }
   cb.addEventListener('change', () => {
     try { localStorage.setItem('exportCountControl', cb.checked ? '1' : '0'); } catch(_){}
   });
