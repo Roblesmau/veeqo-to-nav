@@ -185,8 +185,8 @@
         <span class="pill" id="filtersLastUpdated" style="font-size:10px">Loading…</span>
       </div>
       <div class="row">
-        <div><label>Created from</label><input id="fromDate" type="date"/></div>
-        <div><label>Created to</label><input id="toDate" type="date"/></div>
+        <div><label id="fromDateLabel">Created from</label><input id="fromDate" type="date"/></div>
+        <div><label id="toDateLabel">Created to</label><input id="toDate" type="date"/></div>
       </div>
       <label>Status</label>
       <select id="status">
@@ -862,13 +862,22 @@ $('fetchBtn').addEventListener('click', async () => {
   $('fetchBtn').disabled = true;
   ORDERS = [];
   try {
+    // For status=shipped, the user expects dates to mean "shipped in this window",
+    // not "created in this window". Veeqo's orders endpoint doesn't expose a
+    // shipped_at filter, but for shipped orders updated_at ≈ shipped_at (shipping
+    // is the last status transition). So we send updated_at_* in that case.
+    const statusVal = $('status').value || '';
+    const useUpdatedAt = statusVal === 'shipped';
+    const fromIso = $('fromDate').value ? new Date($('fromDate').value).toISOString() : undefined;
+    const toIso   = $('toDate').value   ? new Date($('toDate').value+'T23:59:59').toISOString() : undefined;
     const baseParams = {
       page_size: $('pageSize').value || 50,
-      status: $('status').value || undefined,
-      created_at_min: $('fromDate').value ? new Date($('fromDate').value).toISOString() : undefined,
-      created_at_max: $('toDate').value ? new Date($('toDate').value+'T23:59:59').toISOString() : undefined,
+      status: statusVal || undefined,
+      [useUpdatedAt ? 'updated_at_min' : 'created_at_min']: fromIso,
+      [useUpdatedAt ? 'updated_at_max' : 'created_at_max']: toIso,
       query: $('query').value || undefined,
     };
+    if (useUpdatedAt) log('Status = shipped: filtering by shipped/updated date instead of created date.');
     const storeIds = Array.from($('stores').selectedOptions).map(o => o.value);
     const maxPages = parseInt($('maxPages').value || '20',10);
     const channels = storeIds.length ? storeIds : [null];
@@ -2425,6 +2434,22 @@ $('exportNavSOBtn').addEventListener('click', () => {
     }
   }
 });
+
+// Swap "Created from/to" labels to "Shipped from/to" when status=shipped, so
+// it's visually clear the date filter now targets shipment date, not creation.
+(function(){
+  const statusEl = $('status');
+  const lblFrom = $('fromDateLabel');
+  const lblTo   = $('toDateLabel');
+  if (!statusEl || !lblFrom || !lblTo) return;
+  function syncLabels(){
+    const shipped = statusEl.value === 'shipped';
+    lblFrom.textContent = shipped ? 'Shipped from' : 'Created from';
+    lblTo.textContent   = shipped ? 'Shipped to'   : 'Created to';
+  }
+  statusEl.addEventListener('change', syncLabels);
+  syncLabels();
+})();
 
 // Persist the Count & Control checkbox.
 (function(){
