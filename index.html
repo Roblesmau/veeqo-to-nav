@@ -148,7 +148,7 @@
   <aside>
     <div style="display:flex;flex-direction:column;gap:14px">
     <fieldset>
-      <legend>1 · Veeqo connection</legend>
+      <legend>1 · Connections</legend>
       <label>API key</label>
       <input id="apiKey" type="password" placeholder="Vqt/..." autocomplete="off"/>
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
@@ -161,6 +161,19 @@
         <option value="https://api.veeqo.com">Direct (https://api.veeqo.com — CORS blocked)</option>
       </select>
       <div class="hint">Default uses the Vercel-hosted proxy at the same domain — no CORS. Switch to "Local proxy" if running <code>node proxy.js</code> locally.</div>
+    </fieldset>
+
+    <fieldset>
+      <legend>1B · Supabase connection</legend>
+      <label>Supabase URL</label>
+      <input id="sbUrlInput" type="text" placeholder="https://&lt;project-ref&gt;.supabase.co" autocomplete="off"/>
+      <label style="margin-top:6px">Supabase anon key</label>
+      <input id="sbAnonInput" type="password" placeholder="eyJhbGciOi..." autocomplete="off"/>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button id="sbSaveBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Save &amp; reload</button>
+        <span class="pill" id="sbStatusPill" style="font-size:10px">Not configured</span>
+      </div>
+      <div class="hint">Stored in this browser only (localStorage). Each teammate enters their own — get the URL + anon key from the Supabase project dashboard → Settings → API. See <code>SUPABASE_SETUP.md</code>.</div>
     </fieldset>
 
     <fieldset>
@@ -494,6 +507,57 @@ $('baseUrl').addEventListener('change', savePrefs);
 loadPrefs();
 // API key must be entered manually by the user — never hardcoded in source.
 
+// ---- Supabase connection (Panel 1B) -------------------------------------
+// Prefill inputs from localStorage, update the status pill, and save+reload
+// on click. SB_URL / SB_ANON / sb are read once at startup further down, so a
+// reload is required for changes to take effect.
+(function initSbConfig(){
+  const urlIn  = $('sbUrlInput');
+  const keyIn  = $('sbAnonInput');
+  const saveBt = $('sbSaveBtn');
+  const pill   = $('sbStatusPill');
+  if (!urlIn || !keyIn || !saveBt || !pill) return;
+  // Keys must match the SB_URL_KEY / SB_ANON_KEY constants declared further down.
+  const SB_URL_LS  = 'veeqo_to_nav_sb_url';
+  const SB_ANON_LS = 'veeqo_to_nav_sb_anon';
+  const savedUrl  = (localStorage.getItem(SB_URL_LS)  || '').trim();
+  const savedAnon = (localStorage.getItem(SB_ANON_LS) || '').trim();
+  urlIn.value = savedUrl;
+  keyIn.value = savedAnon;
+  if (savedUrl && savedAnon){
+    // Decode the JWT ref claim to verify URL/key match — common failure mode.
+    let refMatch = null;
+    try {
+      const claims = JSON.parse(atob(savedAnon.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+      const urlRef = (savedUrl.match(/https?:\/\/([^.]+)\./) || [])[1];
+      refMatch = (claims.ref && urlRef && claims.ref === urlRef);
+    } catch { refMatch = null; }
+    if (refMatch === false){
+      pill.textContent = '⚠ URL/key project mismatch';
+      pill.className = 'pill share-warn';
+    } else {
+      pill.textContent = '✓ Configured';
+      pill.className = 'pill share-ok';
+    }
+  } else {
+    pill.textContent = 'Not configured';
+    pill.className = 'pill share-warn';
+  }
+  saveBt.addEventListener('click', () => {
+    const u = urlIn.value.trim();
+    const k = keyIn.value.trim();
+    if (!u || !k){ alert('Enter both a Supabase URL and an anon key.'); return; }
+    if (!/^https:\/\/[^.]+\.supabase\.co\/?$/.test(u)){
+      if (!confirm('That doesn\'t look like a standard Supabase URL (https://<ref>.supabase.co). Save anyway?')) return;
+    }
+    try {
+      localStorage.setItem(SB_URL_LS,  u.replace(/\/+$/, ''));
+      localStorage.setItem(SB_ANON_LS, k);
+    } catch (e){ alert('Could not save to localStorage: ' + e.message); return; }
+    location.reload();
+  });
+})();
+
 // Default date filters: 7-day rolling window (from = 7 days ago, to = today)
 (function initDates(){
   const fmt = d => d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
@@ -699,8 +763,12 @@ let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
 // ============================================================
 // Supabase — shared state across the team
 // ============================================================
-const SB_URL  = 'https://zoqihptkwurpqenpjgfw.supabase.co';
-const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpvcWlocHRrd3VycHFlbnBqZ2Z3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4MjA0ODgsImV4cCI6MjA5MDM5NjQ4OH0.Zts7u41SIN0HQ5G7sXb-QIhbTGQSctE--lHKa4Fui-Q';
+// Read Supabase config from localStorage — set via Panel 1B in the Setup tab.
+// Nothing is hardcoded here: each teammate enters the URL + anon key once.
+const SB_URL_KEY  = 'veeqo_to_nav_sb_url';
+const SB_ANON_KEY = 'veeqo_to_nav_sb_anon';
+const SB_URL  = (localStorage.getItem(SB_URL_KEY)  || '').trim();
+const SB_ANON = (localStorage.getItem(SB_ANON_KEY) || '').trim();
 const sb = (window.supabase && SB_URL && SB_ANON)
   ? window.supabase.createClient(SB_URL, SB_ANON, { auth: { persistSession: false } })
   : null;
