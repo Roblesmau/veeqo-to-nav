@@ -890,6 +890,12 @@ $('fetchBtn').addEventListener('click', async () => {
   if (!$('apiKey').value){ alert('Enter API key first.'); return; }
   $('fetchBtn').disabled = true;
   ORDERS = [];
+  // If the user is on Supabase bin/stock source, refresh it in parallel with
+  // the order fetch so the merged view reflects the latest inventory_available
+  // every time orders refresh (manual click or auto-refresh).
+  const binPromise = (getBinSource() === 'supabase')
+    ? refreshBinFromSupabase({ silent: true }).catch(e => log('Background bin refresh failed: ' + e.message, 'badge-warn'))
+    : Promise.resolve();
   try {
     // For status=shipped, the user expects dates to mean "shipped in this window",
     // not "created in this window". Veeqo's orders endpoint doesn't expose a
@@ -927,6 +933,9 @@ $('fetchBtn').addEventListener('click', async () => {
     }
     $('ordersCount').textContent = `${ORDERS.length} orders`;
     log(`Done. ${ORDERS.length} orders fetched.`, 'badge-ok');
+    // Wait for the parallel bin/stock refresh (if any) so previewOrders uses
+    // the freshest inventory. Already error-swallowed above.
+    await binPromise;
     const now = new Date();
     if ($('lastFetched')) $('lastFetched').textContent = `Last fetched: ${now.toLocaleTimeString()}`;
     // Prune stale selections (orders no longer in the fetched set)
