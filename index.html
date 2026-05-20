@@ -53,6 +53,7 @@
   /* Shared-state pills — green when synced, orange when not */
   .share-ok{background:#1ec77a;color:#04140c;border:2px solid #14e388;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(20,227,136,.35),0 0 14px rgba(20,227,136,.45);text-shadow:0 1px 0 rgba(255,255,255,.25)}
   .share-warn{background:#ff8a1f;color:#1a0a00;border:2px solid #ffb347;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(255,179,71,.4),0 0 14px rgba(255,138,31,.5);text-shadow:0 1px 0 rgba(255,255,255,.25)}
+  .bin-source-block.inactive{opacity:.45;pointer-events:none;filter:saturate(.4)}
   tr.row-insufficient{background:rgba(245,165,36,.14)}
   html[data-theme="light"] tr.row-insufficient{background:rgba(245,165,36,.18)}
   tr.row-insufficient td{background:transparent}
@@ -247,8 +248,15 @@
     </fieldset>
 
     <fieldset>
-      <legend>4 · Bin / Stock file (Excel)</legend>
-      <div style="display:flex;justify-content:flex-end"><span class="pill" id="binLastUpdated" style="font-size:10px">Loading…</span></div>
+      <legend>4 · Bin / Stock</legend>
+      <div style="display:flex;gap:14px;align-items:center;font-size:12px;margin-bottom:8px;padding:6px 8px;background:var(--card-alt,rgba(255,255,255,0.04));border-radius:6px">
+        <span style="color:var(--muted);font-weight:600">Source:</span>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="binSource" value="xlsx" style="width:auto" checked/> Excel file</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="binSource" value="supabase" style="width:auto"/> Supabase</label>
+        <span class="hint" style="margin-left:auto;font-size:11px">Pick where bin/stock data comes from. The inactive panel below is greyed out.</span>
+      </div>
+      <div id="binSourceXlsx" class="bin-source-block">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><b style="font-size:12px;color:var(--muted)">4A · Excel file</b><span class="pill" id="binLastUpdated" style="font-size:10px;margin-left:auto">Loading…</span></div>
       <input id="binFile" type="file" accept=".xlsx,.xls,.csv"/>
       <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
       <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -277,6 +285,26 @@
       </div>
       <select id="binZones" multiple size="5" style="height:auto"></select>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">Only rows whose <b>Zone Code</b> is selected above are included in the Orders-tab totals. Defaults: <code>ZONE A</code>, <code>ZONE B</code>, <code>ZONE C</code>, <code>GOLDEN</code>. Selection is saved.</div>
+      </div><!-- /4A -->
+
+      <div id="binSourceSupabase" class="bin-source-block" style="margin-top:12px;border-top:1px dashed var(--border,#333);padding-top:12px">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <b style="font-size:12px;color:var(--muted)">4B · Supabase (inventory_available)</b>
+          <span class="pill" id="binSbStatus" style="font-size:10px;margin-left:auto">Never fetched</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <button id="binSbRefreshBtn" type="button" class="ok" style="width:auto;padding:6px 14px">Refresh from Supabase</button>
+          <span id="binSbTimes" class="pill" style="font-size:11px"></span>
+        </div>
+        <div id="binSbLocSums" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.6"></div>
+        <label style="margin-top:10px">Allowed zones (filter) <span id="binSbZonesCount" style="color:var(--muted);font-weight:normal">(0)</span></label>
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <button id="binSbZonesAll"  type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Select all</button>
+          <button id="binSbZonesNone" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear</button>
+        </div>
+        <select id="binSbZones" multiple size="5" style="height:auto"></select>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Uses <code>available_qty</code> per row (already net of reservations). Zones come from <code>sample_zone</code>. Cached in this browser for offline use. The pill turns orange after 1 hour without a refresh.</div>
+      </div>
     </fieldset>
 
     <div style="display:flex;flex-direction:column;gap:14px">
@@ -1145,10 +1173,10 @@ function updateBulkActionUI(){
 // =========================================================
 // ---------- IndexedDB persistence for the mapping file ----------
 const IDB_NAME = 'veeqo_to_nav_db';
-const IDB_STORES = ['mapping','binfile'];
+const IDB_STORES = ['mapping','binfile','bin_supabase'];
 function idbOpen(){
   return new Promise((res, rej) => {
-    const r = indexedDB.open(IDB_NAME, 2);
+    const r = indexedDB.open(IDB_NAME, 3);
     r.onupgradeneeded = () => {
       for (const s of IDB_STORES){
         if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s);
@@ -1790,7 +1818,23 @@ function toNum(v){
   return Number.isFinite(n) ? n : 0;
 }
 
+// Source toggle: 'xlsx' (default) | 'supabase'.
+const BIN_SOURCE_KEY = 'veeqo_to_nav_bin_source';
+function getBinSource(){
+  return localStorage.getItem(BIN_SOURCE_KEY) === 'supabase' ? 'supabase' : 'xlsx';
+}
+function setBinSource(v){
+  try { localStorage.setItem(BIN_SOURCE_KEY, v === 'supabase' ? 'supabase' : 'xlsx'); } catch {}
+}
+
+// Router. Branches to Excel or Supabase pivot. Both write the SAME globals
+// (BIN_MAP, LOCATION_CODES) so every consumer downstream stays the same.
 function rebuildBinMap(){
+  if (getBinSource() === 'supabase') return rebuildBinMapFromSupabase();
+  return rebuildBinMapFromWorkbook();
+}
+
+function rebuildBinMapFromWorkbook(){
   if (!BIN_WB) { BIN_MAP = {}; LOCATION_CODES = []; return; }
   const ws = BIN_WB.Sheets[$('binSheet').value];
   if (!ws) { BIN_MAP = {}; LOCATION_CODES = []; return; }
@@ -1831,6 +1875,193 @@ function rebuildBinMap(){
   log(`Bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows (${skipped} skipped — zone not allowed). Location codes: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
   if (ORDERS.length) previewOrders();
 }
+
+// ============================================================
+// 4B · Supabase bin/stock — pulls from `inventory_available`
+//   item_no | location_code | available_qty | sample_zone (+ others ignored)
+// Cached to IndexedDB('bin_supabase') so reloads are instant + offline-safe.
+// Writes the same BIN_MAP / LOCATION_CODES globals as the Excel branch.
+// ============================================================
+const BIN_SB_ZONES_KEY = 'veeqo_to_nav_binzones_sb_v1';
+let BIN_SB_CACHE = null; // { rows, pulledAt (iso), maxSyncedAt (iso) }
+
+function getSavedBinSbZones(){
+  try { return JSON.parse(localStorage.getItem(BIN_SB_ZONES_KEY)) || []; }
+  catch { return []; }
+}
+function saveBinSbZones(){
+  const zones = Array.from($('binSbZones').selectedOptions).map(o => o.value);
+  try { localStorage.setItem(BIN_SB_ZONES_KEY, JSON.stringify(zones)); } catch {}
+  $('binSbZonesCount').textContent = `(${zones.length})`;
+}
+
+function populateBinSbZones(rows){
+  const sel = $('binSbZones');
+  const zones = Array.from(new Set(rows.map(r => String(r.sample_zone||'').trim().toUpperCase()).filter(Boolean))).sort();
+  const saved = new Set(getSavedBinSbZones().map(String));
+  sel.innerHTML = '';
+  for (const z of zones){
+    const o = document.createElement('option');
+    o.value = z; o.textContent = z;
+    if (saved.has(z)) o.selected = true;
+    sel.appendChild(o);
+  }
+  $('binSbZonesCount').textContent = `(${sel.selectedOptions.length})`;
+}
+
+function fmtNum(n){ return Number(n||0).toLocaleString(); }
+function setBinSbStatus(text, tone){
+  const el = $('binSbStatus'); if (!el) return;
+  el.textContent = text;
+  el.className = 'pill ' + (tone === 'ok' ? 'share-ok' : tone === 'warn' ? 'share-warn' : '');
+}
+
+function renderBinSbTimes(){
+  const timesEl = $('binSbTimes'); if (!timesEl) return;
+  if (!BIN_SB_CACHE){ timesEl.textContent = ''; setBinSbStatus('Never fetched', 'warn'); return; }
+  const ageMs = Date.now() - new Date(BIN_SB_CACHE.pulledAt).getTime();
+  const stale = ageMs > 60 * 60 * 1000; // 1h TTL
+  const pulled = `Pulled ${relativeTime(BIN_SB_CACHE.pulledAt)}`;
+  const synced = BIN_SB_CACHE.maxSyncedAt ? ` · Source synced ${relativeTime(BIN_SB_CACHE.maxSyncedAt)}` : '';
+  const rowsTxt = ` · ${fmtNum((BIN_SB_CACHE.rows||[]).length)} rows`;
+  timesEl.textContent = pulled + synced + rowsTxt;
+  setBinSbStatus(stale ? '⚠ Stale (>1h)' : '✓ Fresh', stale ? 'warn' : 'ok');
+}
+
+function renderBinSbLocSums(){
+  const el = $('binSbLocSums'); if (!el) return;
+  if (!LOCATION_CODES.length || getBinSource() !== 'supabase'){ el.textContent = ''; return; }
+  // Sum available_qty per location across BIN_MAP (which already respects zone filter).
+  const sums = {};
+  for (const code of LOCATION_CODES) sums[code] = 0;
+  for (const sku of Object.keys(BIN_MAP)){
+    const by = BIN_MAP[sku].byCode || {};
+    for (const code of LOCATION_CODES) sums[code] += (by[code] || 0);
+  }
+  const entries = Object.entries(sums).sort((a,b) => b[1]-a[1]);
+  const top = entries.slice(0, 6).map(([c,v]) => `<b>${esc(c)}</b>: ${fmtNum(v)}`).join(' · ');
+  const tail = entries.length > 6 ? ` <span style="opacity:.7">…+${entries.length-6} more</span>` : '';
+  el.innerHTML = top + tail;
+}
+
+function rebuildBinMapFromSupabase(){
+  const rows = BIN_SB_CACHE && BIN_SB_CACHE.rows || [];
+  const allowed = new Set(Array.from($('binSbZones').selectedOptions).map(o => String(o.value).toUpperCase()));
+  BIN_MAP = {};
+  const allCodes = new Set();
+  let kept = 0, skipped = 0;
+  for (const r of rows){
+    const sku = cleanItem(r.item_no); if (!sku) continue;
+    const zone = String(r.sample_zone||'').trim().toUpperCase();
+    if (allowed.size && zone && !allowed.has(zone)) { skipped++; continue; }
+    if (allowed.size && !zone) { skipped++; continue; }
+    const code = String(r.location_code||'').trim();
+    const qty  = Number(r.available_qty) || 0;
+    if (code) allCodes.add(code);
+    let entry = BIN_MAP[sku];
+    if (!entry){ entry = { totalQty: 0, byCode: {} }; BIN_MAP[sku] = entry; }
+    entry.totalQty += qty;
+    if (code) entry.byCode[code] = (entry.byCode[code] || 0) + qty;
+    kept++;
+  }
+  LOCATION_CODES = Array.from(allCodes).sort();
+  log(`Supabase bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows (${skipped} skipped — zone not allowed). Locations: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
+  renderBinSbLocSums();
+  renderBinSbTimes();
+  if (ORDERS.length) previewOrders();
+}
+
+async function refreshBinFromSupabase({ silent=false } = {}){
+  if (!sb){ if (!silent) log('Supabase client not available.', 'badge-warn'); return; }
+  const btn = $('binSbRefreshBtn');
+  if (btn) btn.disabled = true;
+  try {
+    if (!silent) log('Pulling inventory_available from Supabase…');
+    const PAGE = 1000;
+    const all = [];
+    let from = 0, maxSynced = null;
+    while (true){
+      const { data, error } = await sb
+        .from('inventory_available')
+        .select('item_no, location_code, available_qty, sample_zone, synced_at')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      for (const r of data){
+        if (r.synced_at && (!maxSynced || r.synced_at > maxSynced)) maxSynced = r.synced_at;
+      }
+      all.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+      if (all.length >= 200000){
+        log('Supabase refresh: hit 200k row safety cap — increase if you really have more rows.', 'badge-warn');
+        break;
+      }
+    }
+    BIN_SB_CACHE = { rows: all, pulledAt: new Date().toISOString(), maxSyncedAt: maxSynced };
+    try { await idbSave('bin_supabase', BIN_SB_CACHE); } catch (e){ log('Could not cache Supabase bin: ' + e.message, 'badge-warn'); }
+    populateBinSbZones(all);
+    if (getBinSource() === 'supabase') rebuildBinMapFromSupabase();
+    renderBinSbTimes();
+    if (!silent){
+      log(`Supabase bin: ${fmtNum(all.length)} rows pulled. Max synced_at: ${maxSynced || '(none)'}.`, 'badge-ok');
+      try { logActivity(`Refreshed Supabase bin/stock (${all.length} rows)`); } catch {}
+    }
+  } catch (e){
+    log('Supabase bin refresh failed: ' + e.message, 'badge-warn');
+    setBinSbStatus('⚠ Refresh failed', 'warn');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function loadBinSupabaseFromCache(){
+  try {
+    const rec = await idbLoad('bin_supabase');
+    if (rec && rec.rows){
+      BIN_SB_CACHE = rec;
+      populateBinSbZones(rec.rows);
+      renderBinSbTimes();
+    }
+  } catch {}
+}
+
+// Wire up 4B controls.
+function applyBinSourceUI(){
+  const src = getBinSource();
+  document.querySelectorAll('input[name="binSource"]').forEach(r => { r.checked = (r.value === src); });
+  $('binSourceXlsx').classList.toggle('inactive', src !== 'xlsx');
+  $('binSourceSupabase').classList.toggle('inactive', src !== 'supabase');
+}
+document.querySelectorAll('input[name="binSource"]').forEach(r => {
+  r.addEventListener('change', () => {
+    if (!r.checked) return;
+    setBinSource(r.value);
+    applyBinSourceUI();
+    log(`Bin/Stock source switched to ${r.value === 'supabase' ? 'Supabase' : 'Excel'}.`);
+    rebuildBinMap();
+  });
+});
+$('binSbRefreshBtn').addEventListener('click', () => refreshBinFromSupabase({ silent:false }));
+$('binSbZones').addEventListener('change', () => { saveBinSbZones(); if (getBinSource()==='supabase') rebuildBinMapFromSupabase(); });
+$('binSbZonesAll').addEventListener('click', () => {
+  Array.from($('binSbZones').options).forEach(o => o.selected = true);
+  saveBinSbZones(); if (getBinSource()==='supabase') rebuildBinMapFromSupabase();
+});
+$('binSbZonesNone').addEventListener('click', () => {
+  Array.from($('binSbZones').options).forEach(o => o.selected = false);
+  saveBinSbZones(); if (getBinSource()==='supabase') rebuildBinMapFromSupabase();
+});
+applyBinSourceUI();
+loadBinSupabaseFromCache().then(() => {
+  if (getBinSource() === 'supabase'){
+    rebuildBinMapFromSupabase();
+    // Auto-refresh in the background so the first paint is from cache and then swaps.
+    refreshBinFromSupabase({ silent: true });
+  }
+});
+// Refresh the "X min ago" pill every 60s so staleness updates without a reload.
+setInterval(renderBinSbTimes, 60000);
 
 for (const id of ['binColSku','binColLoc','binColQty','binColCode']){
   $(id).addEventListener('change', () => { saveBinColPrefs(); rebuildBinMap(); });
