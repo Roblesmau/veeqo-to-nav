@@ -53,7 +53,7 @@
   /* Shared-state pills — green when synced, orange when not */
   .share-ok{background:#1ec77a;color:#04140c;border:2px solid #14e388;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(20,227,136,.35),0 0 14px rgba(20,227,136,.45);text-shadow:0 1px 0 rgba(255,255,255,.25)}
   .share-warn{background:#ff8a1f;color:#1a0a00;border:2px solid #ffb347;font-weight:800;font-size:13px;padding:5px 12px;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(255,179,71,.4),0 0 14px rgba(255,138,31,.5);text-shadow:0 1px 0 rgba(255,255,255,.25)}
-  .bin-source-block.inactive{opacity:.45;pointer-events:none;filter:saturate(.4)}
+  .bin-source-block.inactive{display:none}
   tr.row-insufficient{background:rgba(245,165,36,.14)}
   html[data-theme="light"] tr.row-insufficient{background:rgba(245,165,36,.18)}
   tr.row-insufficient td{background:transparent}
@@ -287,7 +287,7 @@
       <div style="font-size:11px;color:var(--muted);margin-top:4px">Only rows whose <b>Zone Code</b> is selected above are included in the Orders-tab totals. Defaults: <code>ZONE A</code>, <code>ZONE B</code>, <code>ZONE C</code>, <code>GOLDEN</code>. Selection is saved.</div>
       </div><!-- /4A -->
 
-      <div id="binSourceSupabase" class="bin-source-block" style="margin-top:12px;border-top:1px dashed var(--border,#333);padding-top:12px">
+      <div id="binSourceSupabase" class="bin-source-block">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <b style="font-size:12px;color:var(--muted)">4B · Supabase (inventory_available)</b>
           <span class="pill" id="binSbStatus" style="font-size:10px;margin-left:auto">Never fetched</span>
