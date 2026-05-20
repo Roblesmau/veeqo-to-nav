@@ -364,7 +364,10 @@
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
         <button id="exportOrderByLocBtn" class="ok" style="width:auto;padding:6px 14px;background:#7a4dff;color:white" title="Same data as Nav SO, but one row per order — sorted by Location Code then Order">Export to Order by Loc</button>
         <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
-        <span class="pill" id="lastFetched" title="Time of the last successful fetch">Never fetched</span>
+        <span style="display:flex;flex-direction:column;gap:3px">
+          <span class="pill" id="lastFetched"    title="Time of the last successful order fetch">Never fetched</span>
+          <span class="pill" id="lastBinFetched" title="Time of the last successful Supabase bin/stock refresh">Bin content: never</span>
+        </span>
         <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
           <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
         </label>
@@ -937,7 +940,7 @@ $('fetchBtn').addEventListener('click', async () => {
     // the freshest inventory. Already error-swallowed above.
     await binPromise;
     const now = new Date();
-    if ($('lastFetched')) $('lastFetched').textContent = `Last fetched: ${now.toLocaleTimeString()}`;
+    if ($('lastFetched')) $('lastFetched').textContent = `Last SO Fetched: ${now.toLocaleTimeString()}`;
     // Prune stale selections (orders no longer in the fetched set)
     const visibleNums = new Set(ORDERS.map(o => o.number || o.id || ''));
     for (const n of [...SELECTED_ORDERS]) if (!visibleNums.has(n)) SELECTED_ORDERS.delete(n);
@@ -2013,6 +2016,9 @@ async function refreshBinFromSupabase({ silent=false } = {}){
       }
     }
     BIN_SB_CACHE = { rows: all, pulledAt: new Date().toISOString(), maxSyncedAt: maxSynced };
+    // Mirror to the Orders-tab pill so users can see when stock was last pulled.
+    const pillEl = $('lastBinFetched');
+    if (pillEl) pillEl.textContent = `Last Bin content: ${new Date().toLocaleTimeString()}`;
     try { await idbSave('bin_supabase', BIN_SB_CACHE); } catch (e){ log('Could not cache Supabase bin: ' + e.message, 'badge-warn'); }
     populateBinSbZones(all);
     if (getBinSource() === 'supabase') rebuildBinMapFromSupabase();
@@ -2036,6 +2042,8 @@ async function loadBinSupabaseFromCache(){
       BIN_SB_CACHE = rec;
       populateBinSbZones(rec.rows);
       renderBinSbTimes();
+      const pillEl = $('lastBinFetched');
+      if (pillEl && rec.pulledAt) pillEl.textContent = `Last Bin content: ${new Date(rec.pulledAt).toLocaleTimeString()}`;
     }
   } catch {}
 }
