@@ -154,13 +154,11 @@
       <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
         <input id="remember" type="checkbox" style="width:auto"/> Remember key in this browser
       </label>
-      <label>Base URL</label>
-      <select id="baseUrl">
-        <option value="/api">Production proxy (Vercel — same origin)</option>
-        <option value="http://localhost:8787">Local proxy (http://localhost:8787)</option>
-        <option value="https://api.veeqo.com">Direct (https://api.veeqo.com — CORS blocked)</option>
-      </select>
-      <div class="hint">Default uses the Vercel-hosted proxy at the same domain — no CORS. Switch to "Local proxy" if running <code>node proxy.js</code> locally.</div>
+      <!-- Base URL is hardcoded to the same-origin Vercel proxy. The proxy.js
+           local-dev path and the direct api.veeqo.com path (CORS-blocked) used
+           to live here as a dropdown; removed for clarity. Kept as a hidden
+           input so existing reads of $('baseUrl').value keep working. -->
+      <input id="baseUrl" type="hidden" value="/api"/>
     </fieldset>
 
     <fieldset>
@@ -486,7 +484,8 @@ function loadPrefs(){
   try {
     const p = JSON.parse(localStorage.getItem(KEY)||'{}');
     if (p.apiKey){ $('apiKey').value = p.apiKey; $('remember').checked = true; }
-    if (p.baseUrl){ $('baseUrl').value = p.baseUrl; }
+    // baseUrl is hardcoded to '/api' now (see Panel 1). Ignore any stale value
+    // saved by older versions that exposed a dropdown.
   } catch {}
 }
 function savePrefs(){
