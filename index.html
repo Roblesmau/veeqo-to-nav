@@ -693,7 +693,7 @@ let MAPPING = {};       // cleanedItem -> { upc, sku, raw }
 let MAP_WB = null;      // workbook
 let RESULT = [];        // merged rows for export
 let BIN_WB = null;      // bin/stock workbook
-let BIN_MAP = {};       // cleanedSku -> { totalQty, byCode:{code:qty}, locations:[bin strings] }
+let BIN_MAP = {};       // cleanedSku -> { totalQty, byCode:{code:qty} } — populated by either the Excel or Supabase branch of rebuildBinMap()
 let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
 
 // ============================================================
@@ -1886,6 +1886,9 @@ function rebuildBinMapFromWorkbook(){
   }
   LOCATION_CODES = Array.from(allCodes).sort();
   log(`Bin pivot: ${Object.keys(BIN_MAP).length} unique SKUs from ${kept} rows (${skipped} skipped — zone not allowed). Location codes: ${LOCATION_CODES.length ? LOCATION_CODES.join(', ') : '(none)'}`, 'badge-ok');
+  // Mirror to the Orders-tab pill so the Excel source updates it too.
+  const pillEl = $('lastBinFetched');
+  if (pillEl) pillEl.textContent = `Last Bin content: ${new Date().toLocaleTimeString()}`;
   if (ORDERS.length) previewOrders();
 }
 
