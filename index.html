@@ -940,7 +940,7 @@ $('fetchBtn').addEventListener('click', async () => {
     // the freshest inventory. Already error-swallowed above.
     await binPromise;
     const now = new Date();
-    if ($('lastFetched')) $('lastFetched').textContent = `Last SO Fetched: ${now.toLocaleTimeString()}`;
+    if ($('lastFetched')) $('lastFetched').textContent = `Last E-Order Fetched: ${now.toLocaleTimeString()}`;
     // Prune stale selections (orders no longer in the fetched set)
     const visibleNums = new Set(ORDERS.map(o => o.number || o.id || ''));
     for (const n of [...SELECTED_ORDERS]) if (!visibleNums.has(n)) SELECTED_ORDERS.delete(n);
