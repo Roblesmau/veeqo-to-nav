@@ -299,8 +299,9 @@
         <div id="binSbLocSums" style="margin-top:6px;font-size:11px;color:var(--muted);line-height:1.6"></div>
         <label style="margin-top:10px">Allowed zones (filter) <span id="binSbZonesCount" style="color:var(--muted);font-weight:normal">(0)</span></label>
         <div style="display:flex;gap:6px;margin-bottom:4px">
-          <button id="binSbZonesAll"  type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Select all</button>
-          <button id="binSbZonesNone" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear</button>
+          <button id="binSbZonesAll"     type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Select all</button>
+          <button id="binSbZonesNone"    type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear</button>
+          <button id="binSbZonesDefault" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Defaults (A/B/C/GOLDEN)</button>
         </div>
         <select id="binSbZones" multiple size="5" style="height:auto"></select>
         <div style="font-size:11px;color:var(--muted);margin-top:4px">Uses <code>available_qty</code> per row (already net of reservations). Zones come from <code>sample_zone</code>. Cached in this browser for offline use. The pill turns orange after 1 hour without a refresh.</div>
@@ -1886,8 +1887,12 @@ const BIN_SB_ZONES_KEY = 'veeqo_to_nav_binzones_sb_v1';
 let BIN_SB_CACHE = null; // { rows, pulledAt (iso), maxSyncedAt (iso) }
 
 function getSavedBinSbZones(){
-  try { return JSON.parse(localStorage.getItem(BIN_SB_ZONES_KEY)) || []; }
-  catch { return []; }
+  // Mirror the Excel panel: default to A/B/C/GOLDEN when nothing has been saved.
+  try {
+    const v = localStorage.getItem(BIN_SB_ZONES_KEY);
+    if (v === null) return DEFAULT_ZONES.slice();
+    return JSON.parse(v) || [];
+  } catch { return DEFAULT_ZONES.slice(); }
 }
 function saveBinSbZones(){
   const zones = Array.from($('binSbZones').selectedOptions).map(o => o.value);
@@ -2050,6 +2055,11 @@ $('binSbZonesAll').addEventListener('click', () => {
 });
 $('binSbZonesNone').addEventListener('click', () => {
   Array.from($('binSbZones').options).forEach(o => o.selected = false);
+  saveBinSbZones(); if (getBinSource()==='supabase') rebuildBinMapFromSupabase();
+});
+$('binSbZonesDefault').addEventListener('click', () => {
+  const want = new Set(DEFAULT_ZONES.map(z => z.toUpperCase()));
+  Array.from($('binSbZones').options).forEach(o => o.selected = want.has(o.value.toUpperCase()));
   saveBinSbZones(); if (getBinSource()==='supabase') rebuildBinMapFromSupabase();
 });
 applyBinSourceUI();
