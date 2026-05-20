@@ -5,7 +5,7 @@ filter settings + Items/Bin files across your team.
 
 ## 1. Run the SQL
 
-1. Open <https://supabase.com/dashboard> → your `veeqo-to-nav` project.
+1. Open <https://supabase.com/dashboard> → your `veeqo-to-nav` project (ref `zoqihptkwurpqenpjgfw`).
 2. Left sidebar → **SQL Editor** → **+ New query**.
 3. Paste the SQL below.
 4. Click **Run**.
