@@ -220,6 +220,19 @@
       </label>
       <select id="stores" multiple size="6"></select>
       <div class="hint">Hold Ctrl/Cmd to select multiple. Empty = all stores.</div>
+      <!-- Per-store identifier mapping: tells the app which column of the
+           Items file each store's line-item value should be matched against.
+           Walmart sends our internal SKU → "SKU (Local)". Amazon/Shopify
+           usually send the ecom number → "Ecom number" (default). Hidden when
+           no stores are selected; one row per selected store. Team-shared. -->
+      <div id="storeIdMapWrap" style="margin-top:8px;display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">Match line item against (per store):</span>
+          <span class="pill" id="storeIdMapLastUpdated" style="font-size:10px">No team default</span>
+        </div>
+        <div id="storeIdMapBox" style="display:flex;flex-direction:column;gap:4px;margin-top:6px"></div>
+        <div class="hint" style="margin-top:6px">Pick which Items-file column to look up for each store. Default = Ecom.</div>
+      </div>
       <div class="row">
         <div><label>Page size</label><input id="pageSize" type="number" value="100" min="1" max="100"/></div>
         <div><label>Max pages</label><input id="maxPages" type="number" value="20" min="1" max="200"/></div>
@@ -619,11 +632,103 @@ async function saveStoresToSupabase(){
   await sbSaveSetting(scopedKey('stores'), ids);
 }
 
+// ============================================================
+// Per-store identifier mapping (team-shared, not user-scoped)
+// One entry per Veeqo store telling the app which Items-file column its
+// line-item value should be matched against. Walmart sends our internal SKU;
+// Amazon/Shopify send the ecom number; scanner-driven stores might send UPC.
+// Default for any unmapped store = 'ecom' (back-compat with pre-Walmart era).
+// Lookup tables MAPPING / MAPPING_BY_SKU / MAPPING_BY_UPC are built in
+// rebuildMapping() + buildBtn handler so all three indexes stay in lockstep.
+// ============================================================
+const STORE_ID_MAP_KEY = 'store_identifier_map';
+let STORE_ID_TYPE = {}; // { storeId(string): 'ecom'|'sku'|'upc' }
+
+function getOrderStoreId(o){
+  if (!o) return '';
+  if (o.__storeId) return String(o.__storeId);
+  const id = (o.channel && o.channel.id) || o.channel_id || o.channel_uuid || '';
+  return id ? String(id) : '';
+}
+
+// Single point of truth for line-item → Items-file row resolution.
+// Strict: if the configured lookup misses, returns null (no cross-fallback)
+// so misconfigured stores surface as "unmatched" instead of silently mapping
+// to whichever column happens to share a value.
+function resolveMapping(storeId, ecom, rawSku){
+  const type = STORE_ID_TYPE[String(storeId || '')] || 'ecom';
+  if (type === 'sku') return MAPPING_BY_SKU[cleanItem(rawSku)] || null;
+  if (type === 'upc') return MAPPING_BY_UPC[cleanItem(rawSku)] || null;
+  return MAPPING[cleanItem(ecom)] || null;
+}
+
+function renderStoreIdMap(){
+  const wrap = $('storeIdMapWrap');
+  const box  = $('storeIdMapBox');
+  if (!wrap || !box) return;
+  const opts = $('stores') ? Array.from($('stores').selectedOptions) : [];
+  if (!opts.length){ wrap.style.display = 'none'; box.innerHTML = ''; return; }
+  wrap.style.display = '';
+  box.innerHTML = '';
+  for (const opt of opts){
+    const id = opt.value;
+    const name = opt.textContent;
+    const current = STORE_ID_TYPE[id] || 'ecom';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px';
+    const lbl = document.createElement('span');
+    lbl.textContent = name;
+    lbl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0';
+    lbl.title = name;
+    const sel = document.createElement('select');
+    sel.style.cssText = 'width:auto;padding:2px 6px;font-size:11px;flex:0 0 auto';
+    [['ecom','Ecom number'],['sku','SKU (Local)'],['upc','UPC']].forEach(([v,label]) => {
+      const o = document.createElement('option');
+      o.value = v; o.textContent = label;
+      if (v === current) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', () => {
+      const prev = STORE_ID_TYPE[id] || 'ecom';
+      STORE_ID_TYPE[id] = sel.value;
+      saveStoreIdMapToSupabase(name, prev, sel.value);
+      // Refresh preview so the SKU/UPC/Ecom columns update for the new lookup.
+      if (typeof previewOrders === 'function' && ORDERS.length) previewOrders();
+    });
+    row.appendChild(lbl); row.appendChild(sel);
+    box.appendChild(row);
+  }
+}
+
+async function saveStoreIdMapToSupabase(storeName, prev, next){
+  if (!sb) return;
+  const r = await sbSaveSetting(STORE_ID_MAP_KEY, STORE_ID_TYPE);
+  if (r) setLastUpdated('storeIdMapLastUpdated', r);
+  if (storeName && prev !== next){
+    logActivity(`Store identifier: ${storeName} → ${next}`);
+  }
+}
+
+function applyStoreIdMapFromMap(map){
+  const row = map[STORE_ID_MAP_KEY];
+  if (row && row.value && typeof row.value === 'object' && !Array.isArray(row.value)){
+    STORE_ID_TYPE = { ...row.value };
+    setLastUpdated('storeIdMapLastUpdated', row);
+  } else {
+    STORE_ID_TYPE = {};
+    setLastUpdated('storeIdMapLastUpdated', null);
+  }
+  renderStoreIdMap();
+}
+
 // Hook filter inputs — write to whichever scope is currently selected
 for (const id of SHARED_FILTER_IDS){
   if ($(id)) $(id).addEventListener('change', () => saveFiltersToSupabase());
 }
 $('stores').addEventListener('change', () => saveStoresToSupabase());
+// Re-render the per-store identifier map whenever the store selection changes
+// (registered separately so it composes with the other 'change' listeners).
+$('stores').addEventListener('change', renderStoreIdMap);
 
 // Initialize scope dropdown from localStorage; label personal view with name
 (function initScope(){
@@ -752,7 +857,9 @@ if (location.protocol === 'file:') {
 
 // --- state ---
 let ORDERS = [];        // raw orders from Veeqo
-let MAPPING = {};       // cleanedItem -> { upc, sku, raw }
+let MAPPING = {};         // cleanedEcom    -> { upc, sku, ecom, raw } — Items file row, indexed by Ecom SKU (default lookup)
+let MAPPING_BY_SKU = {};  // cleanedLocalSku -> same row — for stores configured to match against Local SKU (e.g. Walmart)
+let MAPPING_BY_UPC = {};  // cleanedUpc     -> same row — for stores configured to match against UPC
 let MAP_WB = null;      // workbook
 let RESULT = [];        // merged rows for export
 let BIN_WB = null;      // bin/stock workbook
@@ -923,6 +1030,9 @@ async function loadStores({ silent = false } = {}){
       log(`Restored ${Array.from(sel.selectedOptions).length} saved store selection(s).`);
     }
     log(`Loaded ${arr.length} stores.`, 'badge-ok');
+    // Now that store options + selection are populated, render the per-store
+    // identifier map (one row per selected store).
+    renderStoreIdMap();
     return true;
   } catch(e){
     if (silent){
@@ -996,6 +1106,10 @@ $('fetchBtn').addEventListener('click', async () => {
         const data = await veeqoGet('/orders', { ...params, page });
         const arr = Array.isArray(data) ? data : (data.orders || []);
         if (!arr.length){ log(`${label} p${page}: no more.`); break; }
+        // Stamp the channel we fetched these orders against so resolveMapping()
+        // can route per-store regardless of how Veeqo populates o.channel.*
+        // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
+        if (ch) for (const o of arr) o.__storeId = String(ch);
         ORDERS.push(...arr);
         log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
         if (arr.length < (params.page_size|0)) break;
@@ -1113,7 +1227,7 @@ function previewOrders(){
       const discNum  = Number(li ? (li.total_discounts ?? li.discount ?? li.discount_total ?? 0) : 0) || 0;
       const itemCell = rawSku ? `${rawSku}${title?` — ${title}`:''}` : '';
       const ecom = ecomItem(rawSku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecom, rawSku);
       const lookupSku = m ? m.sku : '';
       const lookupUpc = m ? m.upc : '';
       const binEntry = lookupBinEntry(lookupSku, ecom, rawSku);
@@ -1459,6 +1573,7 @@ $('clearMapBtn').addEventListener('click', async () => {
   try {
     const map = await sbLoadSettings();
     applyFiltersFromMap(map);
+    applyStoreIdMapFromMap(map);
     const sharedStoreIds = getStoresFromMap(map);
     if (sharedStoreIds && sharedStoreIds.length){
       const p = getPrefs(); p.storeIds = sharedStoreIds;
@@ -1627,7 +1742,7 @@ function checkAndFireInsufficientWebhook(){
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
       const qty = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
       const ecom = ecomItem(rawSku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecom, rawSku);
       const lookupSku = m ? m.sku : '';
       const binEntry = lookupBinEntry(lookupSku, ecom, rawSku);
       let total = 0;
@@ -1646,7 +1761,7 @@ function checkAndFireInsufficientWebhook(){
     for (const li of (o.line_items || [])){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
-      const m = MAPPING[cleanItem(ecomItem(rawSku))] || MAPPING[cleanItem(rawSku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecomItem(rawSku), rawSku);
       const lookupSku = m ? m.sku : '';
       const binEntry = lookupBinEntry(lookupSku, ecomItem(rawSku), rawSku);
       let total = 0;
@@ -1711,18 +1826,28 @@ $('mapSheet').addEventListener('change', () => {
 function guess(selId, cols, rx){ const m = cols.find(c=>rx.test(c)); if (m) $(selId).value = m; }
 
 function rebuildMapping(){
-  if (!MAP_WB) { MAPPING = {}; return; }
+  if (!MAP_WB) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; return; }
   const ws = MAP_WB.Sheets[$('mapSheet').value];
-  if (!ws) { MAPPING = {}; return; }
+  if (!ws) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; return; }
   const rows = XLSX.utils.sheet_to_json(ws, { header: looksLikeLetterHeader() ? 'A' : undefined, defval: '' });
   const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
-  MAPPING = {};
+  // Three indexes off the same row so resolveMapping() can switch per store
+  // without re-walking the workbook. Keep them in lockstep here.
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
   for (const r of rows){
-    const key = cleanItem(r[cI]);
-    if (!key) continue;
-    MAPPING[key] = { upc: String(r[cU]||'').trim(), sku: String(r[cS]||'').trim(), raw: r[cI] };
+    const ecomRaw = r[cI];
+    const skuRaw  = String(r[cS]||'').trim();
+    const upcRaw  = String(r[cU]||'').trim();
+    const keyE = cleanItem(ecomRaw);
+    const keyS = cleanItem(skuRaw);
+    const keyU = cleanItem(upcRaw);
+    if (!keyE && !keyS && !keyU) continue;
+    const row = { upc: upcRaw, sku: skuRaw, ecom: String(ecomRaw||'').trim(), raw: ecomRaw };
+    if (keyE) MAPPING[keyE] = row;
+    if (keyS) MAPPING_BY_SKU[keyS] = row;
+    if (keyU) MAPPING_BY_UPC[keyU] = row;
   }
-  log(`Mapping ready: ${Object.keys(MAPPING).length} entries.`, 'badge-ok');
+  log(`Mapping ready: ${Object.keys(MAPPING).length} by ecom, ${Object.keys(MAPPING_BY_SKU).length} by sku, ${Object.keys(MAPPING_BY_UPC).length} by upc.`, 'badge-ok');
   if (ORDERS.length) previewOrders(); // refresh preview to fill SKU/UPC
 }
 function looksLikeLetterHeader(){ return /^[A-Z]$/.test($('colItem').value || ''); }
@@ -2214,13 +2339,21 @@ $('buildBtn').addEventListener('click', () => {
   const ws = MAP_WB.Sheets[$('mapSheet').value];
   const rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
   const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
-  MAPPING = {};
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
   for (const r of rows){
-    const key = cleanItem(r[cI]);
-    if (!key) continue;
-    MAPPING[key] = { upc: String(r[cU]||''), sku: String(r[cS]||''), raw: r[cI] };
+    const ecomRaw = r[cI];
+    const skuRaw  = String(r[cS]||'').trim();
+    const upcRaw  = String(r[cU]||'').trim();
+    const keyE = cleanItem(ecomRaw);
+    const keyS = cleanItem(skuRaw);
+    const keyU = cleanItem(upcRaw);
+    if (!keyE && !keyS && !keyU) continue;
+    const row = { upc: upcRaw, sku: skuRaw, ecom: String(ecomRaw||'').trim(), raw: ecomRaw };
+    if (keyE) MAPPING[keyE] = row;
+    if (keyS) MAPPING_BY_SKU[keyS] = row;
+    if (keyU) MAPPING_BY_UPC[keyU] = row;
   }
-  log(`Mapping built: ${Object.keys(MAPPING).length} entries.`);
+  log(`Mapping built: ${Object.keys(MAPPING).length} by ecom, ${Object.keys(MAPPING_BY_SKU).length} by sku, ${Object.keys(MAPPING_BY_UPC).length} by upc.`);
 
   // Flatten orders → line items
   RESULT = [];
@@ -2233,8 +2366,8 @@ $('buildBtn').addEventListener('click', () => {
     for (const li of lis){
       const sv = li.sellable || li.product || {};
       const itemRaw = sv.sku_code || sv.sku || li.sku_code || li.sku || sv.product_title || '';
-      const cleaned = cleanItem(itemRaw);
-      const m = MAPPING[cleaned];
+      const cleaned = cleanItem(itemRaw); // legacy column in RESULT export (item_cleaned)
+      const m = resolveMapping(getOrderStoreId(o), ecomItem(itemRaw), itemRaw);
       if (m) matched++; else unmatched++;
       const localSku = m ? m.sku : '';
       const binEntry = lookupBinEntry(localSku, ecomItem(itemRaw), itemRaw);
@@ -2439,7 +2572,7 @@ function buildNavRows(){
       const sv = li.sellable || li.product || {};
       const sku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
       const ecom = ecomItem(sku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(sku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecom, sku);
       const lookupSku = m ? m.sku : '';
       const lookupUpc = m ? m.upc : '';
       const binEntry = lookupBinEntry(lookupSku, ecom, sku);
@@ -2532,7 +2665,7 @@ function buildNavSORows(){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
       const ecom = ecomItem(rawSku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecom, rawSku);
       const localSku = m ? m.sku : '';
       if (!localSku) continue; // skip unmapped
       let needed = Number(li.quantity ?? li.quantity_ordered ?? 0) || 0;
@@ -2623,7 +2756,7 @@ function buildOrderByLocRows(){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
       const ecom = ecomItem(rawSku);
-      const m = MAPPING[cleanItem(ecom)] || MAPPING[cleanItem(rawSku)] || null;
+      const m = resolveMapping(getOrderStoreId(o), ecom, rawSku);
       const localSku = m ? m.sku : '';
       if (!localSku) continue;
       if (!skuMeta.has(localSku)){
