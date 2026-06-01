@@ -385,6 +385,7 @@
     <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:6px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
+        <button id="exportItemsMdBtn" class="ok" style="width:auto;padding:6px 14px;background:#d4a017;color:white" title="Download every row of public.mau_main_items from Supabase as an Excel file">Export Items MD</button>
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
         <button id="exportOrderByLocBtn" class="ok" style="width:auto;padding:6px 14px;background:#7a4dff;color:white" title="Same data as Nav SO, but one row per order — sorted by Location Code then Order">Export to Order by Loc</button>
         <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
@@ -1134,6 +1135,57 @@ $('fetchBtn').addEventListener('click', async () => {
     surfaceError('Fetch failed', e);
   } finally {
     $('fetchBtn').disabled = false;
+  }
+});
+
+// ============================================================
+// Export Items MD — paginated dump of public.mau_main_items → .xlsx
+// 337k+ rows so we pull in chunks of 10k via PostgREST .range() and stream
+// progress to the log. Always fresh (no caching). All columns.
+// ============================================================
+$('exportItemsMdBtn').addEventListener('click', async () => {
+  if (!sb){ alert('Supabase not configured. Set the URL + anon key in Setup → Panel 1B.'); return; }
+  const btn = $('exportItemsMdBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    log('Export Items MD: fetching from Supabase…');
+    const CHUNK = 10000;
+    let from = 0;
+    const rows = [];
+    while (true){
+      btn.textContent = `Exporting… ${rows.length.toLocaleString()}`;
+      const { data, error } = await sb
+        .from('mau_main_items')
+        .select('item_no,upc,no_2,description_3,description,model,product_color_code,size,product_group_code,item_category_code,synced_at')
+        .order('item_no', { ascending: true })
+        .range(from, from + CHUNK - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      rows.push(...data);
+      log(`Items MD: +${data.length} (total ${rows.length.toLocaleString()})`);
+      if (data.length < CHUNK) break;
+      from += CHUNK;
+    }
+    if (!rows.length){ log('Items MD: no rows returned.', 'badge-warn'); return; }
+
+    btn.textContent = 'Building xlsx…';
+    log(`Building workbook (${rows.length.toLocaleString()} rows)…`);
+    const ws = XLSX.utils.json_to_sheet(rows, {
+      header: ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','item_category_code','synced_at'],
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'mau_main_items');
+    const today = new Date();
+    const ymd = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+    XLSX.writeFile(wb, `mau_main_items_${ymd}.xlsx`);
+    log(`Items MD: downloaded ${rows.length.toLocaleString()} rows.`, 'badge-ok');
+    if (typeof logActivity === 'function') logActivity(`Exported Items MD (${rows.length} rows)`);
+  } catch (e){
+    surfaceError('Export Items MD failed', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
   }
 });
 
