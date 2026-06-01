@@ -1150,7 +1150,12 @@ $('exportItemsMdBtn').addEventListener('click', async () => {
   btn.disabled = true;
   try {
     log('Export Items MD: fetching from Supabase…');
-    const CHUNK = 10000;
+    // Supabase hosted PostgREST caps each response at 1000 rows (db-max-rows).
+    // Earlier we chunked by 10k assuming the cap was higher; the server
+    // silently truncated each page to 1k AND `data.length < CHUNK` then
+    // tripped the exit condition after the first page. Match the server cap
+    // and only stop when a page comes back empty.
+    const CHUNK = 1000;
     let from = 0;
     const rows = [];
     while (true){
@@ -1163,8 +1168,9 @@ $('exportItemsMdBtn').addEventListener('click', async () => {
       if (error) throw error;
       if (!data || !data.length) break;
       rows.push(...data);
-      log(`Items MD: +${data.length} (total ${rows.length.toLocaleString()})`);
-      if (data.length < CHUNK) break;
+      // Only log every 10 pages so we don't spam the console for 245+ chunks.
+      if ((from / CHUNK) % 10 === 0) log(`Items MD: ${rows.length.toLocaleString()} rows so far…`);
+      if (data.length < CHUNK) break; // last (possibly partial) page
       from += CHUNK;
     }
     if (!rows.length){ log('Items MD: no rows returned.', 'badge-warn'); return; }
