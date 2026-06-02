@@ -243,32 +243,58 @@
     </fieldset>
 
     <fieldset>
-      <legend>3 · Items file (Excel)</legend>
-      <div style="display:flex;justify-content:flex-end"><span class="pill" id="itemsLastUpdated" style="font-size:10px">Loading…</span></div>
-      <input id="mapFile" type="file" accept=".xlsx,.xls,.csv"/>
-      <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
-      <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
-        <span class="pill" id="mapStatus">No mapping saved</span>
-        <button id="clearMapBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear saved</button>
+      <legend>3 · Items file</legend>
+      <!-- Dual-source: default is the auto-synced Supabase table; the legacy
+           Excel upload stays as an emergency fallback if that pipeline ever
+           breaks. Pattern mirrors Panel 4 (Bin / Stock). -->
+      <div style="display:flex;gap:14px;align-items:center;font-size:12px;margin-bottom:8px;padding:6px 8px;background:var(--card-alt,rgba(255,255,255,0.04));border-radius:6px">
+        <span style="color:var(--muted);font-weight:600">Source:</span>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="itemsSource" value="mau" style="width:auto" checked/> Supabase (auto-sync)</label>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="itemsSource" value="excel" style="width:auto"/> Excel (legacy)</label>
       </div>
-      <label>Sheet</label>
-      <select id="mapSheet"></select>
-      <div class="row3">
-        <div><label>Ecom SKU column</label><select id="colItem"></select></div>
-        <div><label>UPC column</label><select id="colUpc"></select></div>
-        <div><label>Local SKU column</label><select id="colSku"></select></div>
+
+      <!-- ── Supabase source (mau_main_items) ── -->
+      <div id="itemsMauBlock">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <span style="font-size:11px;color:var(--muted)">Table: <code>public.mau_main_items</code></span>
+          <span class="pill" id="itemsMauStatus" style="font-size:10px">Not loaded yet</span>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">
+          <button id="refreshItemsMauBtn" type="button" class="secondary" style="width:auto;padding:3px 10px;font-size:11px;font-weight:600">Refresh now</button>
+          <span class="pill" id="itemsMauCount" style="font-size:10px">— rows</span>
+          <span class="pill" id="itemsMauSynced" style="font-size:10px" title="max(synced_at) from the source table — refreshed on each pull">Synced: —</span>
+        </div>
+        <div class="hint" style="margin-top:6px">Rows are pulled in 1k-page chunks (Supabase REST cap) and cached in this browser via IndexedDB. Auto-loads on app open; click <b>Refresh now</b> after a Nav sync to force a re-pull. Columns used: <code>item_no</code> = Local SKU, <code>no_2</code> = Ecom SKU, <code>upc</code> = UPC.</div>
       </div>
-      <details>
-        <summary>Item-number cleaning</summary>
-        <label style="display:flex;gap:6px;align-items:center"><input id="cleanTrim" type="checkbox" checked style="width:auto"/> Trim whitespace</label>
-        <label style="display:flex;gap:6px;align-items:center"><input id="cleanUpper" type="checkbox" checked style="width:auto"/> Uppercase</label>
-        <label style="display:flex;gap:6px;align-items:center"><input id="cleanStripNonAlnum" type="checkbox" style="width:auto"/> Remove non-alphanumeric</label>
-        <label style="display:flex;gap:6px;align-items:center"><input id="cleanLeadingZeros" type="checkbox" style="width:auto"/> Drop leading zeros</label>
-        <label>Strip prefix (regex, optional)</label>
-        <input id="cleanPrefix" placeholder="^DE-"/>
-        <label>Strip suffix (regex, optional)</label>
-        <input id="cleanSuffix" placeholder="-V\d+$"/>
-      </details>
+
+      <!-- ── Legacy Excel source ── -->
+      <div id="itemsExcelBlock" style="display:none">
+        <div style="display:flex;justify-content:flex-end"><span class="pill" id="itemsLastUpdated" style="font-size:10px">Loading…</span></div>
+        <input id="mapFile" type="file" accept=".xlsx,.xls,.csv"/>
+        <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
+        <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap">
+          <span class="pill" id="mapStatus">No mapping saved</span>
+          <button id="clearMapBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Clear saved</button>
+        </div>
+        <label>Sheet</label>
+        <select id="mapSheet"></select>
+        <div class="row3">
+          <div><label>Ecom SKU column</label><select id="colItem"></select></div>
+          <div><label>UPC column</label><select id="colUpc"></select></div>
+          <div><label>Local SKU column</label><select id="colSku"></select></div>
+        </div>
+        <details>
+          <summary>Item-number cleaning</summary>
+          <label style="display:flex;gap:6px;align-items:center"><input id="cleanTrim" type="checkbox" checked style="width:auto"/> Trim whitespace</label>
+          <label style="display:flex;gap:6px;align-items:center"><input id="cleanUpper" type="checkbox" checked style="width:auto"/> Uppercase</label>
+          <label style="display:flex;gap:6px;align-items:center"><input id="cleanStripNonAlnum" type="checkbox" style="width:auto"/> Remove non-alphanumeric</label>
+          <label style="display:flex;gap:6px;align-items:center"><input id="cleanLeadingZeros" type="checkbox" style="width:auto"/> Drop leading zeros</label>
+          <label>Strip prefix (regex, optional)</label>
+          <input id="cleanPrefix" placeholder="^DE-"/>
+          <label>Strip suffix (regex, optional)</label>
+          <input id="cleanSuffix" placeholder="-V\d+$"/>
+        </details>
+      </div>
     </fieldset>
 
     <fieldset>
@@ -1425,10 +1451,13 @@ function updateBulkActionUI(){
 // =========================================================
 // ---------- IndexedDB persistence for the mapping file ----------
 const IDB_NAME = 'veeqo_to_nav_db';
-const IDB_STORES = ['mapping','binfile','bin_supabase'];
+// 'mapping_mau' caches the 245k-row dump of public.mau_main_items + a
+// watermark (max synced_at) so subsequent boots skip the re-pull when the
+// upstream table hasn't changed. Bumped to v4 to create the new store.
+const IDB_STORES = ['mapping','binfile','bin_supabase','mapping_mau'];
 function idbOpen(){
   return new Promise((res, rej) => {
-    const r = indexedDB.open(IDB_NAME, 3);
+    const r = indexedDB.open(IDB_NAME, 4);
     r.onupgradeneeded = () => {
       for (const s of IDB_STORES){
         if (!r.result.objectStoreNames.contains(s)) r.result.createObjectStore(s);
@@ -1593,24 +1622,37 @@ $('clearMapBtn').addEventListener('click', async () => {
   if (ORDERS.length) previewOrders();
 });
 
-// Auto-restore on load: try Supabase first (team source of truth),
-// fall back to IndexedDB (local cache) if Supabase has nothing / fails.
+// Wire Items source toggle + manual refresh button.
+applyItemsSourceUI();
+document.querySelectorAll('input[name="itemsSource"]').forEach(r => {
+  r.addEventListener('change', e => { if (e.target.checked) setItemsSource(e.target.value); });
+});
+if ($('refreshItemsMauBtn')){
+  $('refreshItemsMauBtn').addEventListener('click', () => loadItemsFromMauMainItems({ force: true }));
+}
+
+// Auto-restore on load: pick source per ITEMS_SOURCE (default 'mau'). The
+// legacy Excel path stays as a fallback if the user has flipped the radio.
 (async () => {
-  // ---- Items file ----
-  let itemsRec = null;
-  try { itemsRec = await sbLoadFile('items'); } catch {}
-  if (!itemsRec){ itemsRec = await idbLoad('mapping'); }
-  if (itemsRec && (itemsRec.data || itemsRec.buf)){
-    try {
-      const buf = itemsRec.data || itemsRec.buf;
-      loadWorkbookFromBuffer(buf, itemsRec.name || '(shared)');
-      setMapStatus(`Loaded: ${itemsRec.name}`, true);
-      log(`Items file "${itemsRec.name}" loaded.`, 'badge-ok');
-    } catch (err) {
-      log(`Failed to load items file: ${err.message}`, 'badge-warn');
-    }
+  // ---- Items source: Supabase table (default) or legacy Excel ----
+  if (ITEMS_SOURCE === 'mau'){
+    await loadItemsFromMauMainItems({ silent: false });
   } else {
-    setLastUpdated('itemsLastUpdated', null);
+    let itemsRec = null;
+    try { itemsRec = await sbLoadFile('items'); } catch {}
+    if (!itemsRec){ itemsRec = await idbLoad('mapping'); }
+    if (itemsRec && (itemsRec.data || itemsRec.buf)){
+      try {
+        const buf = itemsRec.data || itemsRec.buf;
+        loadWorkbookFromBuffer(buf, itemsRec.name || '(shared)');
+        setMapStatus(`Loaded: ${itemsRec.name}`, true);
+        log(`Items file "${itemsRec.name}" loaded.`, 'badge-ok');
+      } catch (err) {
+        log(`Failed to load items file: ${err.message}`, 'badge-warn');
+      }
+    } else {
+      setLastUpdated('itemsLastUpdated', null);
+    }
   }
   // ---- Bin file ----
   let binRec = null;
@@ -1908,6 +1950,155 @@ function rebuildMapping(){
   log(`Mapping ready: ${Object.keys(MAPPING).length} by ecom, ${Object.keys(MAPPING_BY_SKU).length} by sku, ${Object.keys(MAPPING_BY_UPC).length} by upc.`, 'badge-ok');
   if (ORDERS.length) previewOrders(); // refresh preview to fill SKU/UPC
 }
+
+// ============================================================
+// Items source = Supabase table  public.mau_main_items
+// ============================================================
+// Columns: item_no (Local SKU) · no_2 (Ecom SKU) · upc (UPC) + descriptive
+// metadata we ignore here. Cached in IndexedDB under store 'mapping_mau'
+// with a watermark = max(synced_at) so the second-and-subsequent boots
+// skip the 245k-row re-pull when nothing's changed upstream.
+//
+// Output shape matches rebuildMapping() exactly so downstream code
+// (resolveMapping, 7 match sites, exports) doesn't know or care which
+// source filled MAPPING / MAPPING_BY_SKU / MAPPING_BY_UPC.
+
+const ITEMS_SOURCE_KEY = 'veeqo_to_nav_items_source';
+let ITEMS_SOURCE = (localStorage.getItem(ITEMS_SOURCE_KEY) || 'mau'); // 'mau' | 'excel'
+let ITEMS_MAU_WATERMARK = '';
+let ITEMS_MAU_COUNT = 0;
+
+function setItemsMauPills(){
+  const c = $('itemsMauCount');   if (c) c.textContent = ITEMS_MAU_COUNT ? `${ITEMS_MAU_COUNT.toLocaleString()} rows` : '— rows';
+  const s = $('itemsMauSynced');  if (s) s.textContent = ITEMS_MAU_WATERMARK ? `Synced: ${new Date(ITEMS_MAU_WATERMARK).toLocaleString()}` : 'Synced: —';
+}
+
+function rebuildMappingFromMauRows(rows){
+  // rows: [{ item_no, no_2, upc, ... }]
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  for (const r of rows){
+    const ecomRaw = r.no_2 ?? '';
+    const skuRaw  = String(r.item_no ?? '').trim();
+    const upcRaw  = String(r.upc ?? '').trim();
+    const ecomStr = String(ecomRaw).trim();
+    const keyE = cleanItem(ecomStr);
+    const keyS = cleanItem(skuRaw);
+    const keyU = cleanItem(upcRaw);
+    if (!keyE && !keyS && !keyU) continue;
+    const row = { upc: upcRaw, sku: skuRaw, ecom: ecomStr, raw: ecomRaw };
+    if (keyE) MAPPING[keyE] = row;
+    if (keyS) MAPPING_BY_SKU[keyS] = row;
+    if (keyU) MAPPING_BY_UPC[keyU] = row;
+  }
+  ITEMS_MAU_COUNT = rows.length;
+  setItemsMauPills();
+  if (ORDERS.length) previewOrders();
+}
+
+async function getMauWatermark(){
+  if (!sb) return '';
+  const { data, error } = await sb
+    .from('mau_main_items')
+    .select('synced_at')
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  return (data && data.synced_at) || '';
+}
+
+async function loadItemsFromMauMainItems({ force = false, silent = false } = {}){
+  if (!sb){
+    const pill = $('itemsMauStatus'); if (pill){ pill.textContent = 'Supabase not configured'; pill.className = 'pill share-warn'; }
+    return false;
+  }
+  const pill = $('itemsMauStatus');
+  const setPill = (txt, cls) => { if (pill){ pill.textContent = txt; pill.className = `pill ${cls||''}`.trim(); } };
+  try {
+    setPill('Checking watermark…', '');
+    const watermark = await getMauWatermark();
+    if (!force){
+      const cached = await idbLoad('mapping_mau');
+      if (cached && cached.watermark && watermark && cached.watermark === watermark && Array.isArray(cached.rows)){
+        ITEMS_MAU_WATERMARK = cached.watermark;
+        rebuildMappingFromMauRows(cached.rows);
+        setPill(`✓ Cache fresh (${cached.rows.length.toLocaleString()})`, 'share-ok');
+        if (!silent) log(`Items (mau_main_items): cache hit, ${cached.rows.length.toLocaleString()} rows.`, 'badge-ok');
+        return true;
+      }
+    }
+    setPill('Pulling rows…', '');
+    if (!silent) log('Items (mau_main_items): pulling fresh rows…');
+    const CHUNK = 1000; // matches PostgREST db-max-rows cap on hosted Supabase
+    let from = 0;
+    const rows = [];
+    while (true){
+      if (pill) pill.textContent = `Pulling… ${rows.length.toLocaleString()}`;
+      const { data, error } = await sb
+        .from('mau_main_items')
+        .select('item_no,no_2,upc')
+        .order('item_no', { ascending: true })
+        .range(from, from + CHUNK - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      rows.push(...data);
+      if ((from / CHUNK) % 10 === 0 && !silent) log(`Items: ${rows.length.toLocaleString()} so far…`);
+      if (data.length < CHUNK) break;
+      from += CHUNK;
+    }
+    ITEMS_MAU_WATERMARK = watermark || new Date().toISOString();
+    rebuildMappingFromMauRows(rows);
+    // Cache slim rows (3 cols only) so the next boot can skip the pull.
+    try {
+      await idbSave('mapping_mau', { rows, watermark: ITEMS_MAU_WATERMARK, cachedAt: new Date().toISOString() });
+    } catch (e){
+      log('Could not cache items: ' + e.message, 'badge-warn');
+    }
+    setPill(`✓ Loaded (${rows.length.toLocaleString()})`, 'share-ok');
+    if (!silent) log(`Items (mau_main_items): loaded ${rows.length.toLocaleString()} rows.`, 'badge-ok');
+    return true;
+  } catch (e){
+    setPill('⚠ Failed', 'share-warn');
+    if (!silent) surfaceError('Load Items from Supabase failed', e);
+    return false;
+  }
+}
+
+function applyItemsSourceUI(){
+  const mau    = $('itemsMauBlock');
+  const excel  = $('itemsExcelBlock');
+  if (mau)   mau.style.display   = (ITEMS_SOURCE === 'mau')   ? '' : 'none';
+  if (excel) excel.style.display = (ITEMS_SOURCE === 'excel') ? '' : 'none';
+  const radio = document.querySelector(`input[name="itemsSource"][value="${ITEMS_SOURCE}"]`);
+  if (radio) radio.checked = true;
+}
+
+async function setItemsSource(src){
+  if (src !== 'mau' && src !== 'excel') return;
+  ITEMS_SOURCE = src;
+  try { localStorage.setItem(ITEMS_SOURCE_KEY, src); } catch {}
+  applyItemsSourceUI();
+  // Clear indexes so a half-loaded other-source view doesn't bleed across.
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  if (src === 'mau'){
+    await loadItemsFromMauMainItems({ silent: false });
+  } else {
+    // Legacy: trigger the existing Excel boot path (workbook may already be
+    // cached in IDB/Supabase Storage).
+    let itemsRec = null;
+    try { itemsRec = await sbLoadFile('items'); } catch {}
+    if (!itemsRec){ itemsRec = await idbLoad('mapping'); }
+    if (itemsRec && (itemsRec.data || itemsRec.buf)){
+      const buf = itemsRec.data || itemsRec.buf;
+      loadWorkbookFromBuffer(buf, itemsRec.name || '(shared)');
+      setMapStatus(`Loaded: ${itemsRec.name}`, true);
+    } else {
+      setMapStatus('No mapping saved', false);
+      log('Excel source: no saved file yet. Upload one to use this mode.', 'badge-warn');
+    }
+  }
+}
+
 function looksLikeLetterHeader(){ return /^[A-Z]$/.test($('colItem').value || ''); }
 function saveMapColPrefs(){
   try {
