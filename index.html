@@ -893,6 +893,14 @@ let BIN_WB = null;      // bin/stock workbook
 let BIN_MAP = {};       // cleanedSku -> { totalQty, byCode:{code:qty} } — populated by either the Excel or Supabase branch of rebuildBinMap()
 let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
 
+// Items source — 'mau' (default, public.mau_main_items) or 'excel' (legacy upload).
+// Declared up here so the boot wiring further down (which calls
+// applyItemsSourceUI synchronously) doesn't trip the TDZ on these `let`s.
+const ITEMS_SOURCE_KEY = 'veeqo_to_nav_items_source';
+let ITEMS_SOURCE = (localStorage.getItem(ITEMS_SOURCE_KEY) || 'mau'); // 'mau' | 'excel'
+let ITEMS_MAU_WATERMARK = '';
+let ITEMS_MAU_COUNT = 0;
+
 // ============================================================
 // Supabase — shared state across the team
 // ============================================================
@@ -1962,11 +1970,8 @@ function rebuildMapping(){
 // Output shape matches rebuildMapping() exactly so downstream code
 // (resolveMapping, 7 match sites, exports) doesn't know or care which
 // source filled MAPPING / MAPPING_BY_SKU / MAPPING_BY_UPC.
-
-const ITEMS_SOURCE_KEY = 'veeqo_to_nav_items_source';
-let ITEMS_SOURCE = (localStorage.getItem(ITEMS_SOURCE_KEY) || 'mau'); // 'mau' | 'excel'
-let ITEMS_MAU_WATERMARK = '';
-let ITEMS_MAU_COUNT = 0;
+// (ITEMS_SOURCE / ITEMS_MAU_WATERMARK / ITEMS_MAU_COUNT live up with the
+// other module-level state so the boot wiring doesn't hit a TDZ.)
 
 function setItemsMauPills(){
   const c = $('itemsMauCount');   if (c) c.textContent = ITEMS_MAU_COUNT ? `${ITEMS_MAU_COUNT.toLocaleString()} rows` : '— rows';
