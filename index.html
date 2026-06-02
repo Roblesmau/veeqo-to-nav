@@ -267,8 +267,16 @@
         <div class="hint" style="margin-top:6px">Rows are pulled in 1k-page chunks (Supabase REST cap) and cached in this browser via IndexedDB. Auto-loads on app open; click <b>Refresh now</b> after a Nav sync to force a re-pull. Columns used: <code>item_no</code> = Local SKU, <code>no_2</code> = Ecom SKU, <code>upc</code> = UPC.</div>
       </div>
 
-      <!-- ── Legacy Excel source ── -->
-      <div id="itemsExcelBlock" style="display:none">
+      <!-- ── Manual Excel upload (emergency fallback) ──────────────
+           Always visible. Uploading a file auto-switches the active source
+           to 'excel' so the user doesn't have to remember the radio. -->
+      <div style="border-top:1px dashed var(--line);margin-top:14px;padding-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-size:12px;color:var(--muted);font-weight:600">Manual Excel upload (emergency fallback)</span>
+          <span style="font-size:10px;color:var(--muted)">Picks the file up automatically — no need to flip the radio.</span>
+        </div>
+      </div>
+      <div id="itemsExcelBlock">
         <div style="display:flex;justify-content:flex-end"><span class="pill" id="itemsLastUpdated" style="font-size:10px">Loading…</span></div>
         <input id="mapFile" type="file" accept=".xlsx,.xls,.csv"/>
         <div class="hint">"No file chosen" is normal after reload — browsers reset the picker. The pill below shows what's actually loaded.</div>
@@ -1528,6 +1536,15 @@ $('mapFile').addEventListener('change', async e => {
   } catch (err) {
     log(`Could not persist mapping file: ${err.message}`, 'badge-warn');
   }
+  // Auto-switch the active source so the just-uploaded file actually drives
+  // MAPPING. Otherwise the user uploads, sees the workbook load, but the
+  // orders preview keeps using the Supabase indexes — confusing.
+  if (ITEMS_SOURCE !== 'excel'){
+    ITEMS_SOURCE = 'excel';
+    try { localStorage.setItem(ITEMS_SOURCE_KEY, 'excel'); } catch {}
+    applyItemsSourceUI();
+    log('Active source switched to Excel (uploaded file).', 'badge-ok');
+  }
   // Share a SLIM 3-column version with the team via Supabase
   scheduleSlimItemsUpload(f.name);
 });
@@ -2070,10 +2087,14 @@ async function loadItemsFromMauMainItems({ force = false, silent = false } = {})
 }
 
 function applyItemsSourceUI(){
+  // Both blocks stay visible at all times — Excel uploader is always available
+  // as an emergency fallback. The radio + a faint badge on the inactive block
+  // signal which source is currently *active* (i.e. populating MAPPING).
   const mau    = $('itemsMauBlock');
   const excel  = $('itemsExcelBlock');
-  if (mau)   mau.style.display   = (ITEMS_SOURCE === 'mau')   ? '' : 'none';
-  if (excel) excel.style.display = (ITEMS_SOURCE === 'excel') ? '' : 'none';
+  const setDim = (el, dim) => { if (!el) return; el.style.opacity = dim ? '0.55' : '1'; };
+  setDim(mau,   ITEMS_SOURCE !== 'mau');
+  setDim(excel, ITEMS_SOURCE !== 'excel');
   const radio = document.querySelector(`input[name="itemsSource"][value="${ITEMS_SOURCE}"]`);
   if (radio) radio.checked = true;
 }
