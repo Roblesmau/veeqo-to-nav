@@ -1638,7 +1638,11 @@ function diffSlimItemsCsv(oldText, newText){
 
 $('clearMapBtn').addEventListener('click', async () => {
   await idbClear('mapping');
-  MAP_WB = null; MAPPING = {};
+  // Clear all three lookup indexes — the by-sku/by-upc indexes were added
+  // later (per-store identifier mapping) and this handler hadn't been
+  // updated, so stale data could linger after a "Clear saved" if any store
+  // was set to SKU/UPC lookup.
+  MAP_WB = null; MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
   $('mapSheet').innerHTML = '';
   for (const id of ['colItem','colUpc','colSku']) $(id).innerHTML = '';
   $('mapFile').value = '';
