@@ -415,6 +415,21 @@
       <div class="fb-group"><span class="fb-label">📅 Dates</span><span id="fbDates" class="fb-chip fb-any">Any</span></div>
       <div class="fb-group"><span class="fb-label">📦 Status</span><span id="fbStatus" class="fb-chip fb-any">Any</span></div>
       <div class="fb-group"><span class="fb-label">🏬 Stores</span><span id="fbStores" class="fb-chip fb-any">All stores</span></div>
+      <span style="flex-basis:100%;height:0"></span>
+      <span style="display:flex;flex-direction:column;gap:3px">
+        <span class="pill" id="lastFetched"    title="Time of the last successful order fetch">Never fetched</span>
+        <span class="pill" id="lastBinFetched" title="Time of the last successful Supabase bin/stock refresh">Bin content: never</span>
+      </span>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
+        <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="When checked, clicking Export to Nav SO also generates the Order by Loc file (one row per order) for count & control.">
+        <input id="exportCountControl" type="checkbox" checked style="width:auto"/> Export File for Count &amp; Control
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="Show only rows where ordered Qty exceeds the total stock across all locations">
+        <input id="insufficientOnly" type="checkbox" style="width:auto"/> Insufficient stock only
+      </label>
+      <button id="copySelectedBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400" disabled title="Copy the order numbers of all checked rows to your clipboard">Copy selected (0)</button>
     </div>
     <div class="toolbar" style="flex-direction:column;align-items:stretch;gap:6px">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -424,20 +439,6 @@
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
         <button id="exportOrderByLocBtn" class="ok" style="width:auto;padding:6px 14px;background:#7a4dff;color:white" title="Same data as Nav SO, but one row per order — sorted by Location Code then Order">Export to Order by Loc</button>
         <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
-        <span style="display:flex;flex-direction:column;gap:3px">
-          <span class="pill" id="lastFetched"    title="Time of the last successful order fetch">Never fetched</span>
-          <span class="pill" id="lastBinFetched" title="Time of the last successful Supabase bin/stock refresh">Bin content: never</span>
-        </span>
-        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
-          <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="When checked, clicking Export to Nav SO also generates the Order by Loc file (one row per order) for count & control.">
-          <input id="exportCountControl" type="checkbox" checked style="width:auto"/> Export File for Count &amp; Control
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="Show only rows where ordered Qty exceeds the total stock across all locations">
-          <input id="insufficientOnly" type="checkbox" style="width:auto"/> Insufficient stock only
-        </label>
-        <button id="copySelectedBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400" disabled title="Copy the order numbers of all checked rows to your clipboard">Copy selected (0)</button>
         <span class="grow"></span>
         <input id="filterText" placeholder="Filter Order / Customer / Ecom Item / SKU / UPC..." style="max-width:300px" title="Type any text — rows where Order, Customer, Ecom Item, SKU, or UPC contain the text will be shown."/>
         <button id="clearFilterBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400">Clear filter</button>
