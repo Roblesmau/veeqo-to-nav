@@ -8,3 +8,11 @@ Thumbs.db
 # Claude Code per-machine permissions (do not share)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Agent skills (installed per-machine via `npx skills`)
+.agents/
+skills-lock.json
+
+# Unrelated workstreams that happen to live in this folder
+Eyewear-Returns-SOP.pdf
+returns-process-sop.html

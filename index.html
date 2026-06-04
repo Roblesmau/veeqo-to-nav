@@ -420,6 +420,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button id="fetchBtn" style="width:auto;padding:6px 14px">Fetch orders</button>
         <button id="exportItemsMdBtn" class="ok" style="width:auto;padding:6px 14px;background:#d4a017;color:white" title="Download every row of public.mau_main_items from Supabase as an Excel file">Export Items MD</button>
+        <button id="exportAvailBtn" class="ok" style="width:auto;padding:6px 14px;background:#d4a017;color:white" title="Pivot of public.inventory_available — one row per SKU, columns per bin, plus Total. Enriched with every column from mau_main_items.">Export Available to Take</button>
         <button id="exportNavBtn" class="ok" style="width:auto;padding:6px 14px">Export to Scan and Ship</button>
         <button id="exportOrderByLocBtn" class="ok" style="width:auto;padding:6px 14px;background:#7a4dff;color:white" title="Same data as Nav SO, but one row per order — sorted by Location Code then Order">Export to Order by Loc</button>
         <button id="exportNavSOBtn" class="ok" style="width:auto;padding:6px 14px;background:#3a8cff;color:white" title="Aggregate by SKU and allocate qty against bins by priority (BIN-ECAMZ → BIN-VIN → DE-MAIN)">Export to Nav SO</button>
@@ -1231,6 +1232,128 @@ $('exportItemsMdBtn').addEventListener('click', async () => {
     if (typeof logActivity === 'function') logActivity(`Exported Items MD (${rows.length} rows)`);
   } catch (e){
     surfaceError('Export Items MD failed', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+});
+
+// ============================================================
+// Export Available to Take — paginated dump of public.inventory_available,
+// pivoted SKU × bin (one row per SKU, one column per location_code, plus
+// a Total column), enriched with every column from public.mau_main_items.
+// All zones, always fresh. Filename includes timestamp so multiple
+// exports on the same day don't clobber each other.
+// ============================================================
+$('exportAvailBtn').addEventListener('click', async () => {
+  if (!sb){ alert('Supabase not configured. Set the URL + anon key in Setup → Panel 1B.'); return; }
+  const btn = $('exportAvailBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  try {
+    const CHUNK = 1000; // PostgREST db-max-rows cap on hosted Supabase
+
+    // 1) Pull every row of inventory_available (all zones).
+    log('Export Available to Take: pulling inventory_available…');
+    const invRows = [];
+    {
+      let from = 0;
+      while (true){
+        btn.textContent = `Inventory… ${invRows.length.toLocaleString()}`;
+        const { data, error } = await sb
+          .from('inventory_available')
+          .select('item_no,location_code,available_qty,sample_zone,synced_at')
+          .order('item_no', { ascending: true })
+          .range(from, from + CHUNK - 1);
+        if (error) throw error;
+        if (!data || !data.length) break;
+        invRows.push(...data);
+        if ((from / CHUNK) % 10 === 0) log(`Inventory: ${invRows.length.toLocaleString()} rows so far…`);
+        if (data.length < CHUNK) break;
+        from += CHUNK;
+      }
+    }
+    if (!invRows.length){ log('Available to Take: no inventory rows returned.', 'badge-warn'); return; }
+
+    // 2) Pull every row of mau_main_items so we can enrich each SKU.
+    //    Same column set as the Export Items MD button — keep them in sync
+    //    if more columns get added to mau_main_items.
+    log('Export Available to Take: pulling mau_main_items…');
+    const MD_COLS = ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','item_category_code','synced_at'];
+    const mdRows = [];
+    {
+      let from = 0;
+      while (true){
+        btn.textContent = `Items MD… ${mdRows.length.toLocaleString()}`;
+        const { data, error } = await sb
+          .from('mau_main_items')
+          .select(MD_COLS.join(','))
+          .order('item_no', { ascending: true })
+          .range(from, from + CHUNK - 1);
+        if (error) throw error;
+        if (!data || !data.length) break;
+        mdRows.push(...data);
+        if ((from / CHUNK) % 10 === 0) log(`Items MD: ${mdRows.length.toLocaleString()} rows so far…`);
+        if (data.length < CHUNK) break;
+        from += CHUNK;
+      }
+    }
+
+    // 3) Build (item_no → mau_main_items row) lookup.
+    btn.textContent = 'Indexing…';
+    const mdByItem = new Map();
+    for (const r of mdRows){
+      const k = String(r.item_no ?? '').trim();
+      if (k) mdByItem.set(k, r);
+    }
+
+    // 4) Pivot inventory: SKU → { loc → qty } and collect distinct locations.
+    const pivot = new Map();          // item_no → Map(loc → qty)
+    const locSet = new Set();
+    for (const r of invRows){
+      const sku = String(r.item_no ?? '').trim();
+      const loc = String(r.location_code ?? '').trim();
+      const qty = Number(r.available_qty) || 0;
+      if (!sku || !loc) continue;
+      locSet.add(loc);
+      let bucket = pivot.get(sku);
+      if (!bucket){ bucket = new Map(); pivot.set(sku, bucket); }
+      bucket.set(loc, (bucket.get(loc) || 0) + qty); // sum in case of dupes
+    }
+    const locations = Array.from(locSet).sort();
+
+    // 5) Assemble final rows. Sort by item_no asc.
+    btn.textContent = 'Building xlsx…';
+    const skus = Array.from(pivot.keys()).sort();
+    const header = [...MD_COLS, ...locations, 'Total'];
+    const outRows = skus.map(sku => {
+      const md = mdByItem.get(sku) || {};
+      const row = {};
+      for (const c of MD_COLS) row[c] = md[c] ?? (c === 'item_no' ? sku : '');
+      const bucket = pivot.get(sku);
+      let total = 0;
+      for (const loc of locations){
+        const q = bucket.get(loc) || 0;
+        row[loc] = q;
+        total += q;
+      }
+      row['Total'] = total;
+      return row;
+    });
+
+    log(`Available to Take: ${outRows.length.toLocaleString()} SKUs × ${locations.length} locations.`);
+    const ws = XLSX.utils.json_to_sheet(outRows, { header });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'available_to_take');
+
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    const stamp = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+    XLSX.writeFile(wb, `available_to_take_${stamp}.xlsx`);
+    log(`Available to Take: downloaded ${outRows.length.toLocaleString()} SKUs.`, 'badge-ok');
+    if (typeof logActivity === 'function') logActivity(`Exported Available to Take (${outRows.length} SKUs, ${locations.length} locations)`);
+  } catch (e){
+    surfaceError('Export Available to Take failed', e);
   } finally {
     btn.disabled = false;
     btn.textContent = original;
