@@ -1205,7 +1205,7 @@ $('exportItemsMdBtn').addEventListener('click', async () => {
       btn.textContent = `Exporting… ${rows.length.toLocaleString()}`;
       const { data, error } = await sb
         .from('mau_main_items')
-        .select('item_no,upc,no_2,description_3,description,model,product_color_code,size,product_group_code,item_category_code,synced_at')
+        .select('item_no,upc,no_2,description_3,description,model,product_color_code,size,product_group_code,brand_name,item_category_code,synced_at')
         .order('item_no', { ascending: true })
         .range(from, from + CHUNK - 1);
       if (error) throw error;
@@ -1221,7 +1221,7 @@ $('exportItemsMdBtn').addEventListener('click', async () => {
     btn.textContent = 'Building xlsx…';
     log(`Building workbook (${rows.length.toLocaleString()} rows)…`);
     const ws = XLSX.utils.json_to_sheet(rows, {
-      header: ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','item_category_code','synced_at'],
+      header: ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','brand_name','item_category_code','synced_at'],
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'mau_main_items');
@@ -1279,7 +1279,7 @@ $('exportAvailBtn').addEventListener('click', async () => {
     //    Same column set as the Export Items MD button — keep them in sync
     //    if more columns get added to mau_main_items.
     log('Export Available to Take: pulling mau_main_items…');
-    const MD_COLS = ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','item_category_code','synced_at'];
+    const MD_COLS = ['item_no','upc','no_2','description_3','description','model','product_color_code','size','product_group_code','brand_name','item_category_code','synced_at'];
     const mdRows = [];
     {
       let from = 0;
