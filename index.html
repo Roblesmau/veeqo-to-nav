@@ -688,14 +688,29 @@ function getOrderStoreId(o){
 }
 
 // Single point of truth for line-item → Items-file row resolution.
-// Strict: if the configured lookup misses, returns null (no cross-fallback)
-// so misconfigured stores surface as "unmatched" instead of silently mapping
-// to whichever column happens to share a value.
+// Smart-fallback: try the store's configured column first (ecom/sku/upc).
+// If that misses, walk the other two indexes so a Walmart-style store
+// that sends a bare SKU still resolves to the canonical row even if the
+// per-store dropdown is misconfigured. Returns null only when nothing
+// matches anywhere — kept strict in that sense so unmatched rows still
+// surface as warn-styled empty cells.
 function resolveMapping(storeId, ecom, rawSku){
   const type = STORE_ID_TYPE[String(storeId || '')] || 'ecom';
-  if (type === 'sku') return MAPPING_BY_SKU[cleanItem(rawSku)] || null;
-  if (type === 'upc') return MAPPING_BY_UPC[cleanItem(rawSku)] || null;
-  return MAPPING[cleanItem(ecom)] || null;
+  const eKey = cleanItem(ecom);
+  const sKey = cleanItem(rawSku);
+  // ecom is derived from rawSku in callers — when the store is in 'ecom'
+  // mode and the raw value isn't actually an ecom number (e.g. Walmart's
+  // bare SKU), the same string still needs to be tried against the SKU
+  // and UPC indexes. So we also try sKey under the ecom key.
+  const tryEcom = () => MAPPING[eKey] || MAPPING[sKey] || null;
+  const trySku  = () => MAPPING_BY_SKU[sKey] || MAPPING_BY_SKU[eKey] || null;
+  const tryUpc  = () => MAPPING_BY_UPC[sKey] || MAPPING_BY_UPC[eKey] || null;
+  let m = type === 'sku' ? trySku() : type === 'upc' ? tryUpc() : tryEcom();
+  if (m) return m;
+  if (type !== 'sku')  { m = trySku();  if (m) return m; }
+  if (type !== 'ecom') { m = tryEcom(); if (m) return m; }
+  if (type !== 'upc')  { m = tryUpc();  if (m) return m; }
+  return null;
 }
 
 function renderStoreIdMap(){
@@ -1449,10 +1464,15 @@ function previewOrders(){
       const priceNum = Number(li ? (li.price_per_unit ?? li.unit_price ?? li.price ?? 0) : 0) || 0;
       const discNum  = Number(li ? (li.total_discounts ?? li.discount ?? li.discount_total ?? 0) : 0) || 0;
       const itemCell = rawSku ? `${rawSku}${title?` — ${title}`:''}` : '';
-      const ecom = ecomItem(rawSku);
-      const m = resolveMapping(getOrderStoreId(o), ecom, rawSku);
+      const rawEcom = ecomItem(rawSku);
+      const m = resolveMapping(getOrderStoreId(o), rawEcom, rawSku);
       const lookupSku = m ? m.sku : '';
       const lookupUpc = m ? m.upc : '';
+      // When a row matched, show the canonical Ecom number from the
+      // items file (so a Walmart line that came in as a bare SKU still
+      // shows the real EC00xxxxx in the Ecom Item column). If no match,
+      // fall back to the raw value so the user still sees what arrived.
+      const ecom = (m && m.ecom) ? m.ecom : rawEcom;
       const binEntry = lookupBinEntry(lookupSku, ecom, rawSku);
       const codeVals = {};
       let totalAvail = 0;
