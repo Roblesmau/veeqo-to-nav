@@ -1174,6 +1174,30 @@ $('fetchBtn').addEventListener('click', async () => {
         if (arr.length < (params.page_size|0)) break;
       }
     }
+    // Dedupe by order number across channels. Veeqo occasionally returns
+    // the same purchase order as two separate records (e.g. when Walmart's
+    // API exposes multiple shipping rate quotes for the same PO, or when
+    // the same channel is reachable from more than one selected store).
+    // Keep the most recently updated record so we don't lose a status
+    // change; drop the older twin. Records with no `number` are kept as-is.
+    {
+      const seen = new Map();
+      let dropped = 0;
+      const passthrough = [];
+      for (const o of ORDERS){
+        const key = String(o.number || '');
+        if (!key){ passthrough.push(o); continue; }
+        const prev = seen.get(key);
+        if (!prev){ seen.set(key, o); continue; }
+        const newer = String(o.updated_at||'') > String(prev.updated_at||'') ? o : prev;
+        seen.set(key, newer);
+        dropped++;
+      }
+      if (dropped){
+        ORDERS = [...passthrough, ...seen.values()];
+        log(`Deduplicated ${dropped} duplicate order record${dropped===1?'':'s'} (same order number across channels).`, 'badge-warn');
+      }
+    }
     $('ordersCount').textContent = `${ORDERS.length} orders`;
     log(`Done. ${ORDERS.length} orders fetched.`, 'badge-ok');
     // Wait for the parallel bin/stock refresh (if any) so previewOrders uses
