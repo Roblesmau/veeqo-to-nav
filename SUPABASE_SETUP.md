@@ -43,14 +43,24 @@ create table if not exists activity_log (
 );
 create index if not exists activity_log_ts_idx on activity_log (ts desc);
 
+-- Orders already exported via "Export to Nav SO" (Orders tab → Exported column).
+-- Team-shared: one row per order number. Exported orders are excluded from the
+-- next Nav SO export and from insufficient-stock detection.
+create table if not exists exported_orders (
+  order_number text        primary key,
+  exported_at  timestamptz not null default now(),
+  exported_by  text
+);
+
 -- ============================================================
 -- ROW-LEVEL SECURITY
 -- Single-workspace model: anyone with the anon key can read + write.
 -- (Locking down to a workspace password or auth later is a 1-policy change.)
 -- ============================================================
-alter table app_settings  enable row level security;
-alter table shared_files  enable row level security;
-alter table activity_log  enable row level security;
+alter table app_settings    enable row level security;
+alter table shared_files    enable row level security;
+alter table activity_log    enable row level security;
+alter table exported_orders enable row level security;
 
 drop policy if exists "settings: read"   on app_settings;
 drop policy if exists "settings: write"  on app_settings;
@@ -60,6 +70,10 @@ drop policy if exists "files: write"     on shared_files;
 drop policy if exists "files: update"    on shared_files;
 drop policy if exists "activity: read"   on activity_log;
 drop policy if exists "activity: write"  on activity_log;
+drop policy if exists "exported: read"   on exported_orders;
+drop policy if exists "exported: write"  on exported_orders;
+drop policy if exists "exported: update" on exported_orders;
+drop policy if exists "exported: delete" on exported_orders;
 
 create policy "settings: read"   on app_settings for select using (true);
 create policy "settings: write"  on app_settings for insert with check (true);
@@ -71,6 +85,16 @@ create policy "files: update"    on shared_files for update using (true);
 
 create policy "activity: read"   on activity_log for select using (true);
 create policy "activity: write"  on activity_log for insert with check (true);
+
+create policy "exported: read"   on exported_orders for select using (true);
+create policy "exported: write"  on exported_orders for insert with check (true);
+create policy "exported: update" on exported_orders for update using (true);
+create policy "exported: delete" on exported_orders for delete using (true);
+
+-- PostgREST needs to see the new table + reload its schema cache.
+grant usage on schema public to anon, authenticated;
+grant select, insert, update, delete on public.exported_orders to anon, authenticated;
+notify pgrst, 'reload schema';
 ```
 
 ## 2. Create the Storage bucket
