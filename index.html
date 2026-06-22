@@ -1119,6 +1119,23 @@ async function setOrderExported(orderNumber, exported){
   }
 }
 
+// Un-mark a batch of order numbers (the Exported header "unselect all").
+// Marking a batch reuses markOrdersExported(); this is the delete path.
+async function unmarkOrdersExported(numbers){
+  const nums = [...new Set((numbers || []).map(n => String(n||'')).filter(Boolean))];
+  if (!nums.length) return;
+  for (const n of nums) EXPORTED_ORDERS.delete(n);
+  if (ORDERS.length) previewOrders();
+  if (!sb) return;
+  try {
+    const { error } = await sb.from('exported_orders').delete().in('order_number', nums);
+    if (error) throw error;
+    log(`Cleared exported flag from ${nums.length} order${nums.length===1?'':'s'}.`, 'badge-ok');
+  } catch (e){
+    log('Could not clear exported flags: ' + e.message, 'badge-warn');
+  }
+}
+
 // Clear every exported flag (the "Clear exported" button).
 async function clearExportedOrders(){
   const had = EXPORTED_ORDERS.size;
@@ -1677,7 +1694,14 @@ function previewOrders(){
   // 5. Render header (with select-all + sort indicators)
   const arrow = (col) => SORT_COL === col ? `<span class="sort-arrow">${SORT_DIR === 'asc' ? '▲' : '▼'}</span>` : '';
   const headerHtml = `<th style="width:28px"><input type="checkbox" id="selectAll" style="width:auto" title="Select all visible rows"/></th>` +
-    cols.map(h => `<th class="sortable" data-col="${esc(h)}">${esc(h)}${arrow(h)}</th>`).join('') +
+    cols.map(h => {
+      // The Exported column gets a select-all checkbox in its header (mark/
+      // unmark every visible order at once) instead of a sort toggle.
+      if (h === 'Exported'){
+        return `<th title="Mark or unmark every visible order as exported"><label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin:0;color:inherit"><input type="checkbox" id="exportedAll" style="width:auto"/>Exported</label></th>`;
+      }
+      return `<th class="sortable" data-col="${esc(h)}">${esc(h)}${arrow(h)}</th>`;
+    }).join('') +
     `<th>Action</th>`;
   $('resultHead').innerHTML = headerHtml;
 
@@ -1749,6 +1773,15 @@ function updateBulkActionUI(){
     const someChecked = Array.from(all).some(cb => cb.checked);
     selectAll.checked = allChecked;
     selectAll.indeterminate = !allChecked && someChecked;
+  }
+  // Sync the Exported header select-all with visible Exported checkboxes.
+  const exp = document.querySelectorAll('#resultBody .exp-select');
+  const exportedAll = $('exportedAll');
+  if (exportedAll && exp.length){
+    const allExp = Array.from(exp).every(cb => cb.checked);
+    const someExp = Array.from(exp).some(cb => cb.checked);
+    exportedAll.checked = allExp;
+    exportedAll.indeterminate = !allExp && someExp;
   }
 }
 
@@ -3052,6 +3085,16 @@ document.getElementById('resultBody').addEventListener('change', (e) => {
   setOrderExported(cb.dataset.order, cb.checked);
 });
 document.getElementById('resultHead').addEventListener('change', (e) => {
+  if (e.target.id === 'exportedAll'){
+    // Mark/unmark every currently-visible order as exported. Dedupes order
+    // numbers across multi-line orders; one batch Supabase call either way.
+    const nums = [...new Set(
+      [...document.querySelectorAll('#resultBody .exp-select')].map(cb => cb.dataset.order)
+    )].filter(Boolean);
+    if (e.target.checked) markOrdersExported(nums);
+    else unmarkOrdersExported(nums);
+    return;
+  }
   if (e.target.id !== 'selectAll') return;
   const visible = document.querySelectorAll('#resultBody .row-select');
   visible.forEach(cb => {
