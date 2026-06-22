@@ -3471,13 +3471,11 @@ $('exportNavSOBtn').addEventListener('click', () => {
   XLSX.writeFile(wb, `nav-so-${stamp()}.xlsx`);
   log(`Nav SO export: ${rows.length} allocation rows downloaded (priority BIN-ECAMZ → BIN-VIN → DE-MAIN).`, 'badge-ok');
 
-  // Mark every order that contributed >=1 allocated unit to this file as
-  // exported (team-shared). Excludes them from future insufficient-stock
-  // detection. Fully-unfulfillable / unmapped orders are not in the set.
-  markOrdersExported([...contributedOrders]);
-
   // Companion file for count & control: same data as Order by Loc (per-order rows).
   // Reuses the unfulfillable confirmation the user already accepted above — no second prompt.
+  // MUST run BEFORE markOrdersExported() below — that call adds these orders to
+  // EXPORTED_ORDERS synchronously, and buildOrderByLocRows() skips exported orders,
+  // so marking first would empty this companion file.
   if ($('exportCountControl') && $('exportCountControl').checked){
     const { rows: ocRows } = buildOrderByLocRows();
     if (ocRows.length){
@@ -3489,6 +3487,12 @@ $('exportNavSOBtn').addEventListener('click', () => {
       log(`Count & Control file: ${ocRows.length} per-order rows downloaded.`, 'badge-ok');
     }
   }
+
+  // Mark every order that contributed >=1 allocated unit to this file as
+  // exported (team-shared). Excludes them from future insufficient-stock
+  // detection. Fully-unfulfillable / unmapped orders are not in the set.
+  // Kept last so the companion file above still sees these orders.
+  markOrdersExported([...contributedOrders]);
 });
 
 // Swap "Created from/to" labels to "Shipped from/to" when status=shipped, so
