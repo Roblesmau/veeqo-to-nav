@@ -206,9 +206,8 @@
         <div><label id="fromDateLabel">Created from</label><input id="fromDate" type="date"/></div>
         <div><label id="toDateLabel">Created to</label><input id="toDate" type="date"/></div>
       </div>
-      <label>Status</label>
-      <select id="status">
-        <option value="">(any)</option>
+      <label>Status (multi-select)</label>
+      <select id="status" multiple size="6">
         <option value="awaiting_fulfillment" selected>Ready to ship (awaiting_fulfillment)</option>
         <option value="awaiting_amazon_fulfillment">Awaiting Amazon fulfillment</option>
         <option value="awaiting_payment">Awaiting payment</option>
@@ -220,6 +219,7 @@
         <option value="on_hold">On hold</option>
         <option value="parked">Parked</option>
       </select>
+      <div class="hint">Hold Ctrl/Cmd to select multiple. Select none = any status. Tip: add Shipped + Cancelled alongside Ready-to-ship so split orders can be detected and hidden by the "Hide" toggles on the Orders tab.</div>
       <label style="display:flex;justify-content:space-between;align-items:center">
         <span>Stores (multi-select)</span>
         <button id="loadStoresBtn" type="button" class="secondary" style="width:auto;padding:2px 8px;font-size:11px;font-weight:400">Load stores</button>
@@ -651,7 +651,14 @@ function applyFiltersFromMap(map){
   const f = map[scopedKey('filters')];
   if (f && f.value){
     for (const id of SHARED_FILTER_IDS){
-      if (f.value[id] != null && $(id)) $(id).value = f.value[id];
+      if (f.value[id] == null || !$(id)) continue;
+      if (id === 'status'){
+        // Stored as an array now; tolerate a legacy single string too.
+        const want = new Set([].concat(f.value[id]).map(String));
+        Array.from($(id).options).forEach(o => { o.selected = want.has(o.value); });
+      } else {
+        $(id).value = f.value[id];
+      }
     }
     setLastUpdated('filtersLastUpdated', f);
   } else if (getFilterScope() === 'shared') {
@@ -671,7 +678,12 @@ function getStoresFromMap(map){
 async function saveFiltersToSupabase(){
   if (!sb) return;
   const value = {};
-  for (const id of SHARED_FILTER_IDS) if ($(id)) value[id] = $(id).value;
+  for (const id of SHARED_FILTER_IDS){
+    if (!$(id)) continue;
+    // status is multi-select → persist the full array of selected values.
+    if (id === 'status') value[id] = Array.from($(id).selectedOptions).map(o => o.value);
+    else value[id] = $(id).value;
+  }
   const row = await sbSaveSetting(scopedKey('filters'), value);
   if (row) setLastUpdated('filtersLastUpdated', row);
 }
@@ -870,10 +882,12 @@ function updateFilterBanner(){
     datesEl.className = 'fb-chip' + (any ? ' fb-any' : '');
   }
   const statusEl = $('fbStatus'); if (statusEl){
-    const sel = $('status') && $('status').value;
-    const txt = sel ? ($('status').selectedOptions[0]?.textContent || sel) : 'Any';
-    statusEl.textContent = txt;
-    statusEl.className = 'fb-chip' + (sel ? '' : ' fb-any');
+    const opts = $('status') ? Array.from($('status').selectedOptions) : [];
+    // Use the short marketplace-ish label: text before the first " (".
+    const labels = opts.map(o => (o.textContent || o.value).split(' (')[0].trim());
+    statusEl.textContent = labels.length ? labels.join(', ') : 'Any';
+    statusEl.className = 'fb-chip' + (labels.length ? '' : ' fb-any');
+    if (labels.length > 1) statusEl.title = `${labels.length} statuses selected`; else statusEl.removeAttribute('title');
   }
   const storesEl = $('fbStores'); if (storesEl){
     const opts = $('stores') ? Array.from($('stores').selectedOptions) : [];
@@ -935,6 +949,15 @@ let LOCATION_CODES = []; // unique sorted list of Location Codes seen in BIN_MAP
 // excluded from the insufficient-stock demand tally (their stock is already
 // committed in Nav). Declared up here so boot wiring can't trip a TDZ.
 let EXPORTED_ORDERS = new Set();
+
+// Order numbers seen shipped / cancelled in the most recent fetch. Populated
+// from ALL fetched records BEFORE dedupe, so when a split Walmart order comes
+// back as two records (one awaiting, one shipped/cancelled), the surviving
+// awaiting row still knows its twin is done and the Hide filters can drop it.
+// Requires the shipped/cancelled status to be selected in the (multi) Status
+// filter so those sibling records are actually fetched.
+let SHIPPED_ORDER_NUMS = new Set();
+let CANCELLED_ORDER_NUMS = new Set();
 
 // Items source — 'mau' (default, public.mau_main_items) or 'excel' (legacy upload).
 // Declared up here so the boot wiring further down (which calls
@@ -1273,39 +1296,59 @@ $('fetchBtn').addEventListener('click', async () => {
     // not "created in this window". Veeqo's orders endpoint doesn't expose a
     // shipped_at filter, but for shipped orders updated_at ≈ shipped_at (shipping
     // is the last status transition). So we send updated_at_* in that case.
-    const statusVal = $('status').value || '';
-    const useUpdatedAt = statusVal === 'shipped';
+    // Status is now multi-select. No selection = any status (single pass with
+    // no status param). Veeqo's /orders status filter takes one value per
+    // request, so we loop the selected statuses.
+    const statusList = Array.from($('status').selectedOptions).map(o => o.value).filter(Boolean);
+    // Date axis: "shipped" orders are best filtered by shipped/updated date, but
+    // only when shipped is the ONLY selected status — mixing statuses uses the
+    // common created_at axis so awaiting + shipped + cancelled all line up.
+    const useUpdatedAt = statusList.length === 1 && statusList[0] === 'shipped';
     const fromIso = $('fromDate').value ? new Date($('fromDate').value).toISOString() : undefined;
     const toIso   = $('toDate').value   ? new Date($('toDate').value+'T23:59:59').toISOString() : undefined;
     const baseParams = {
       page_size: $('pageSize').value || 50,
-      status: statusVal || undefined,
       [useUpdatedAt ? 'updated_at_min' : 'created_at_min']: fromIso,
       [useUpdatedAt ? 'updated_at_max' : 'created_at_max']: toIso,
       query: $('query').value || undefined,
     };
-    if (useUpdatedAt) log('Status = shipped: filtering by shipped/updated date instead of created date.');
+    if (useUpdatedAt) log('Status = shipped only: filtering by shipped/updated date instead of created date.');
     const storeIds = Array.from($('stores').selectedOptions).map(o => o.value);
     const maxPages = parseInt($('maxPages').value || '20',10);
     const channels = storeIds.length ? storeIds : [null];
-    log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'})`);
+    const statuses = statusList.length ? statusList : [undefined]; // [undefined] = no status filter
+    log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'} × ${statuses.length} status${statuses.length===1?'':'es'})`);
 
-    for (const ch of channels){
-      const params = { ...baseParams };
-      if (ch) params.channel_id = ch;
-      const label = ch ? `channel ${ch}` : 'all channels';
-      for (let page=1; page<=maxPages; page++){
-        const data = await veeqoGet('/orders', { ...params, page });
-        const arr = Array.isArray(data) ? data : (data.orders || []);
-        if (!arr.length){ log(`${label} p${page}: no more.`); break; }
-        // Stamp the channel we fetched these orders against so resolveMapping()
-        // can route per-store regardless of how Veeqo populates o.channel.*
-        // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
-        if (ch) for (const o of arr) o.__storeId = String(ch);
-        ORDERS.push(...arr);
-        log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
-        if (arr.length < (params.page_size|0)) break;
+    for (const st of statuses){
+      for (const ch of channels){
+        const params = { ...baseParams };
+        if (st) params.status = st;
+        if (ch) params.channel_id = ch;
+        const label = `${st || 'any'}${ch ? ` · channel ${ch}` : ''}`;
+        for (let page=1; page<=maxPages; page++){
+          const data = await veeqoGet('/orders', { ...params, page });
+          const arr = Array.isArray(data) ? data : (data.orders || []);
+          if (!arr.length){ log(`${label} p${page}: no more.`); break; }
+          // Stamp the channel we fetched these orders against so resolveMapping()
+          // can route per-store regardless of how Veeqo populates o.channel.*
+          // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
+          if (ch) for (const o of arr) o.__storeId = String(ch);
+          ORDERS.push(...arr);
+          log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
+          if (arr.length < (params.page_size|0)) break;
+        }
       }
+    }
+    // Build shipped / cancelled exclusion sets from ALL fetched records BEFORE
+    // dedupe, so a shipped/cancelled twin can hide its awaiting sibling even if
+    // dedupe keeps the awaiting record.
+    SHIPPED_ORDER_NUMS = new Set();
+    CANCELLED_ORDER_NUMS = new Set();
+    for (const o of ORDERS){
+      const num = String(o.number || o.id || '');
+      if (!num) continue;
+      if (isShippedOrder(o))   SHIPPED_ORDER_NUMS.add(num);
+      if (isCancelledOrder(o)) CANCELLED_ORDER_NUMS.add(num);
     }
     // Dedupe by order number across channels. Veeqo occasionally returns
     // the same purchase order as two separate records (e.g. when Walmart's
@@ -1566,6 +1609,15 @@ function deliveryOf(o){
   if (typeof dm === 'string') return dm;
   return dm.name || dm.code || dm.title || '';
 }
+// Small emoji badge for the order's sales channel (Amazon / Walmart / …),
+// shown before the order number. Tooltip carries the full channel name.
+const STORE_ICONS = { amazon:'📦', walmart:'🛒', shopify:'🛍️', ebay:'🏷️', etsy:'🧵', magento:'🧱', woocommerce:'🟣', bigcommerce:'🔷', direct:'🏬', manual:'✍️' };
+function storeBadge(type, name){
+  const t = String(type || '').toLowerCase();
+  const icon = STORE_ICONS[t] || '🏬';
+  const label = name || type || 'Unknown store';
+  return `<span class="store-badge" title="${esc(label)}" style="margin-right:6px;cursor:default">${icon}</span>`;
+}
 // True if Veeqo considers this order cancelled. Walmart cancellations
 // sometimes leave the Veeqo status as awaiting_fulfillment but stamp
 // cancelled_at / cancel_reason, so we check those too.
@@ -1637,18 +1689,10 @@ function previewOrders(){
   // 1. Build flat rows. Sort by created_at ascending first so cumulative
   // demand is computed in the right order (oldest order eats stock first).
   const sortedOrders = [...ORDERS].sort((a, b) => String(a.created_at||'').localeCompare(String(b.created_at||'')));
-  // Cross-record pass: if ANY fetched record for an order number is shipped /
-  // cancelled, treat every row of that order number the same. Covers the case
-  // where Veeqo returns a split Walmart order as two separate records (one
-  // shipped, one still awaiting) rather than one record with two allocations.
-  const shippedNums = new Set();
-  const cancelledNums = new Set();
-  for (const o of sortedOrders){
-    const num = String(o.number || o.id || '');
-    if (!num) continue;
-    if (isShippedOrder(o))   shippedNums.add(num);
-    if (isCancelledOrder(o)) cancelledNums.add(num);
-  }
+  // Shipped / cancelled detection uses the fetch-time sets (built pre-dedupe
+  // from every fetched record) unioned with this record's own signals — so a
+  // split Walmart order whose shipped/cancelled twin was fetched gets caught
+  // even if dedupe kept the awaiting record.
   const cumDemand = {}; // demandKey -> qty used so far across earlier rows
   const flat = [];
   for (const o of sortedOrders){
@@ -1685,8 +1729,8 @@ function previewOrders(){
       // neither flagged nor counted against later orders' availability.
       const orderNumber = o.number || o.id || '';
       const exported = EXPORTED_ORDERS.has(String(orderNumber));
-      const cancelled = cancelledNums.has(String(orderNumber));
-      const shipped   = shippedNums.has(String(orderNumber));
+      const cancelled = CANCELLED_ORDER_NUMS.has(String(orderNumber)) || isCancelledOrder(o);
+      const shipped   = SHIPPED_ORDER_NUMS.has(String(orderNumber))   || isShippedOrder(o);
       const demandKey = cleanItem(lookupSku) || cleanItem(rawSku) || cleanItem(ecom);
       let insufficient = false;
       if (!exported && demandKey){
@@ -1701,6 +1745,8 @@ function previewOrders(){
         qty, priceNum, discNum, codeVals, totalAvail,
         status: o.status || '',
         created: o.created_at || '',
+        channelType: (o.channel && o.channel.type_code) || '',
+        channelName: (o.channel && o.channel.name) || '',
         insufficient, exported, cancelled, shipped,
       });
     }
@@ -1779,7 +1825,7 @@ function previewOrders(){
     const rowClass = r.exported ? ' class="row-exported"' : (r.insufficient ? ' class="row-insufficient"' : '');
     return `<tr${rowClass}>
       <td><input type="checkbox" class="row-select" data-order="${esc(r.orderNumber)}" style="width:auto"${checked}/></td>
-      <td>${esc(r.orderNumber)}</td>
+      <td>${storeBadge(r.channelType, r.channelName)}${esc(r.orderNumber)}</td>
       <td title="${esc(r.created)}">${esc(fmtOrderDate(r.created))}</td>
       <td><input type="checkbox" class="exp-select" data-order="${esc(r.orderNumber)}" style="width:auto"${expChecked} title="Exported to Nav SO — unchecked orders are the ones included in the next Export to Nav SO; exported orders are excluded from insufficient-stock detection"/></td>
       <td><div class="cust-cell"><span class="cust-avatar">${esc(custInitials(r.cust))}</span><span>${esc(r.cust)}</span></div></td>
@@ -3610,7 +3656,8 @@ $('exportNavSOBtn').addEventListener('click', () => {
   const lblTo   = $('toDateLabel');
   if (!statusEl || !lblFrom || !lblTo) return;
   function syncLabels(){
-    const shipped = statusEl.value === 'shipped';
+    const sel = Array.from(statusEl.selectedOptions).map(o => o.value);
+    const shipped = sel.length === 1 && sel[0] === 'shipped';
     lblFrom.textContent = shipped ? 'Shipped from' : 'Created from';
     lblTo.textContent   = shipped ? 'Shipped to'   : 'Created to';
   }
