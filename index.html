@@ -1600,6 +1600,12 @@ function itemsSummary(o){
     return `${qty}× ${sku}${title?` — ${title}`:''}`;
   }).join(' | ');
 }
+// Short local date for the Orders table (e.g. 6/30/2026). Empty if unparseable.
+function fmtOrderDate(iso){
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleDateString();
+}
 // Extract the EC item number, drop "-FBM" or any trailing "-suffix"
 function ecomItem(sku){
   const s = String(sku||'').trim();
@@ -1626,7 +1632,7 @@ let SORT_DIR = 'asc';
 const SELECTED_ORDERS = new Set();
 
 function previewOrders(){
-  const cols = ['Order','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
+  const cols = ['Order','Date','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 1. Build flat rows. Sort by created_at ascending first so cumulative
   // demand is computed in the right order (oldest order eats stock first).
@@ -1774,6 +1780,7 @@ function previewOrders(){
     return `<tr${rowClass}>
       <td><input type="checkbox" class="row-select" data-order="${esc(r.orderNumber)}" style="width:auto"${checked}/></td>
       <td>${esc(r.orderNumber)}</td>
+      <td title="${esc(r.created)}">${esc(fmtOrderDate(r.created))}</td>
       <td><input type="checkbox" class="exp-select" data-order="${esc(r.orderNumber)}" style="width:auto"${expChecked} title="Exported to Nav SO — unchecked orders are the ones included in the next Export to Nav SO; exported orders are excluded from insufficient-stock detection"/></td>
       <td><div class="cust-cell"><span class="cust-avatar">${esc(custInitials(r.cust))}</span><span>${esc(r.cust)}</span></div></td>
       <td>${esc(r.shipFrom)}</td>
@@ -1798,6 +1805,7 @@ function sortValueForCol(r, col){
   if (LOCATION_CODES.includes(col)) return r.codeVals[col] || 0;
   switch (col){
     case 'Order':     return String(r.orderNumber).toLowerCase();
+    case 'Date':      return String(r.created || '');
     case 'Exported':  return r.exported ? 1 : 0;
     case 'Customer':  return String(r.cust).toLowerCase();
     case 'Ship from': return String(r.shipFrom).toLowerCase();
