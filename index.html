@@ -1640,6 +1640,16 @@ function renderStoreLegend(){
   items.push(`<span style="display:inline-flex;align-items:center;gap:4px"><span style="font-size:15px">🏬</span>Other</span>`);
   el.innerHTML = items.join('');
 }
+// Colored status dot for the orders table: red=cancelled, green=shipped,
+// yellow=still awaiting. Cancelled wins over shipped if a record somehow
+// carries both signals (shouldn't happen, but cancellation is the more
+// consequential state to surface).
+function statusPill(cancelled, shipped){
+  const [color, label] = cancelled ? ['#ef4444','Cancelled']
+                        : shipped  ? ['#22c55e','Shipped']
+                        :            ['#eab308','Unshipped'];
+  return `<span title="${label}" style="display:inline-flex;align-items:center;gap:6px"><span style="width:9px;height:9px;border-radius:50%;background:${color};flex-shrink:0"></span>${label}</span>`;
+}
 // True if Veeqo considers this order cancelled. Walmart cancellations
 // sometimes leave the Veeqo status as awaiting_fulfillment but stamp
 // cancelled_at / cancel_reason, so we check those too.
@@ -1714,7 +1724,7 @@ let SORT_DIR = 'asc';
 const SELECTED_ORDERS = new Set();
 
 function previewOrders(){
-  const cols = ['Order','Date','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
+  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 1. Build flat rows. Sort by created_at ascending first so cumulative
   // demand is computed in the right order (oldest order eats stock first).
@@ -1860,6 +1870,7 @@ function previewOrders(){
       <td><input type="checkbox" class="row-select" data-order="${esc(r.orderNumber)}" style="width:auto"${checked}/></td>
       <td>${storeBadge(r.channelType, r.channelName)}${esc(r.orderNumber)}</td>
       <td title="${esc(r.created)}">${esc(fmtOrderDate(r.created))}</td>
+      <td>${statusPill(r.cancelled, r.shipped)}</td>
       <td><input type="checkbox" class="exp-select" data-order="${esc(r.orderNumber)}" style="width:auto"${expChecked} title="Exported to Nav SO — unchecked orders are the ones included in the next Export to Nav SO; exported orders are excluded from insufficient-stock detection"/></td>
       <td><div class="cust-cell"><span class="cust-avatar">${esc(custInitials(r.cust))}</span><span>${esc(r.cust)}</span></div></td>
       <td>${esc(r.shipFrom)}</td>
@@ -1885,6 +1896,7 @@ function sortValueForCol(r, col){
   switch (col){
     case 'Order':     return String(r.orderNumber).toLowerCase();
     case 'Date':      return String(r.created || '');
+    case 'Status':    return r.cancelled ? 2 : r.shipped ? 1 : 0;
     case 'Exported':  return r.exported ? 1 : 0;
     case 'Customer':  return String(r.cust).toLowerCase();
     case 'Ship from': return String(r.shipFrom).toLowerCase();
