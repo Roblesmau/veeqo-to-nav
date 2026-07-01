@@ -1825,6 +1825,17 @@ function previewOrders(){
     filtered = filtered.filter(r => !r.shipped);
   }
 
+  // 3c. Total Orders / Total Items Requested reflect what's actually visible
+  // after every filter above (text search, insufficient-only, hide toggles) —
+  // not the raw fetched set. Distinct order numbers + summed Qty across all
+  // filtered rows (not just the rendered/capped slice).
+  {
+    const visibleOrderNums = new Set(filtered.map(r => r.orderNumber));
+    const visibleQty = filtered.reduce((s, r) => s + (Number(r.qty) || 0), 0);
+    if ($('statOrders')) $('statOrders').textContent = visibleOrderNums.size.toLocaleString();
+    if ($('statItems'))  $('statItems').textContent  = visibleQty.toLocaleString();
+  }
+
   // 4. Apply sort
   if (SORT_COL){
     const dir = SORT_DIR === 'asc' ? 1 : -1;
