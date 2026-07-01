@@ -62,6 +62,12 @@
   tr.row-exported td{background:transparent}
   th.sortable{cursor:pointer;user-select:none}
   th.sortable:hover{color:var(--accent)}
+  /* Draggable column-resize handle on the right edge of each header cell.
+     th is already position:sticky (a positioned containing block) so the
+     absolute handle anchors to it — do NOT add position:relative here, it
+     would clobber the sticky header. */
+  .col-resizer{position:absolute;top:0;right:0;width:7px;height:100%;cursor:col-resize;user-select:none;z-index:2}
+  .col-resizer:hover,.col-resizer.active{background:var(--accent)}
   th .sort-arrow{display:inline-block;margin-left:4px;color:var(--accent);font-size:10px}
   .stat-box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 18px;min-width:170px}
   .stat-label{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px}
@@ -1678,6 +1684,14 @@ function ecomItemsOf(o){
   return seen.join(' | ');
 }
 
+// Per-browser column widths for the orders table (keyed by column name /
+// special key). Persisted to localStorage only — intentionally NOT shared via
+// Supabase, since column sizing is a personal display preference.
+const COL_W_KEY = 'veeqo_to_nav_col_widths';
+let COL_WIDTHS = {};
+try { COL_WIDTHS = JSON.parse(localStorage.getItem(COL_W_KEY) || '{}') || {}; } catch { COL_WIDTHS = {}; }
+function saveColWidths(){ try { localStorage.setItem(COL_W_KEY, JSON.stringify(COL_WIDTHS)); } catch {} }
+
 // Sort + select state for the live preview table
 let SORT_COL = '';
 let SORT_DIR = 'asc';
@@ -1799,16 +1813,19 @@ function previewOrders(){
 
   // 5. Render header (with select-all + sort indicators)
   const arrow = (col) => SORT_COL === col ? `<span class="sort-arrow">${SORT_DIR === 'asc' ? '▲' : '▼'}</span>` : '';
-  const headerHtml = `<th style="width:28px"><input type="checkbox" id="selectAll" style="width:auto" title="Select all visible rows"/></th>` +
+  // Apply any user-saved width for a column key, plus the drag handle.
+  const wStyle = (key, extra) => `style="${extra||''}${COL_WIDTHS[key] ? `width:${COL_WIDTHS[key]}px;` : ''}"`;
+  const RESIZER = '<span class="col-resizer"></span>';
+  const headerHtml = `<th data-key="__select" ${wStyle('__select','width:28px;')}><input type="checkbox" id="selectAll" style="width:auto" title="Select all visible rows"/>${RESIZER}</th>` +
     cols.map(h => {
       // The Exported column gets a select-all checkbox in its header (mark/
       // unmark every visible order at once) instead of a sort toggle.
       if (h === 'Exported'){
-        return `<th title="Mark or unmark every visible order as exported"><label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin:0;color:inherit"><input type="checkbox" id="exportedAll" style="width:auto"/>Exported</label></th>`;
+        return `<th data-key="Exported" ${wStyle('Exported')} title="Mark or unmark every visible order as exported"><label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin:0;color:inherit"><input type="checkbox" id="exportedAll" style="width:auto"/>Exported</label>${RESIZER}</th>`;
       }
-      return `<th class="sortable" data-col="${esc(h)}">${esc(h)}${arrow(h)}</th>`;
+      return `<th class="sortable" data-col="${esc(h)}" data-key="${esc(h)}" ${wStyle(h)}>${esc(h)}${arrow(h)}${RESIZER}</th>`;
     }).join('') +
-    `<th>Action</th>`;
+    `<th data-key="__action" ${wStyle('__action')}>Action${RESIZER}</th>`;
   $('resultHead').innerHTML = headerHtml;
 
   // 6. Render body (cap at 1000 rows for performance)
@@ -3173,12 +3190,49 @@ $('filterText').addEventListener('keydown', (e) => {
 
 // Sortable header clicks — toggle direction or pick new column
 document.getElementById('resultHead').addEventListener('click', (e) => {
+  // A click that originated on the resize handle must not trigger a sort.
+  if (e.target.closest('.col-resizer')) return;
   const th = e.target.closest('th.sortable'); if (!th) return;
   const col = th.dataset.col;
   if (SORT_COL === col){ SORT_DIR = SORT_DIR === 'asc' ? 'desc' : 'asc'; }
   else { SORT_COL = col; SORT_DIR = 'asc'; }
   if (ORDERS.length) previewOrders();
 });
+
+// Column resizing — drag the handle on a header's right edge. Widths persist
+// per-browser in localStorage (COL_WIDTHS) and are re-applied on every render.
+(function(){
+  const head = document.getElementById('resultHead');
+  if (!head) return;
+  let th = null, key = null, startX = 0, startW = 0, dragging = false, handleEl = null;
+  head.addEventListener('mousedown', (e) => {
+    handleEl = e.target.closest('.col-resizer'); if (!handleEl) return;
+    th = handleEl.closest('th'); if (!th) return;
+    key = th.dataset.key || th.dataset.col || '';
+    startX = e.clientX;
+    startW = th.getBoundingClientRect().width;
+    dragging = true;
+    handleEl.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault(); e.stopPropagation();
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!dragging || !th) return;
+    const w = Math.max(40, Math.round(startW + (e.clientX - startX)));
+    th.style.width = w + 'px';
+    if (key) COL_WIDTHS[key] = w;
+  });
+  window.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false; th = null; key = null;
+    if (handleEl) handleEl.classList.remove('active');
+    handleEl = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    saveColWidths();
+  });
+})();
 
 // Row checkboxes + select-all (event delegation)
 document.getElementById('resultBody').addEventListener('change', (e) => {
