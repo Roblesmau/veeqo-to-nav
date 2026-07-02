@@ -500,8 +500,22 @@
       <button id="historyAddBtn" type="button" class="ok" style="width:auto;padding:6px 14px">+ Add row</button>
       <span class="pill" id="historyCount">0 rows</span>
       <span class="grow"></span>
-      <input id="historyFilterText" placeholder="Filter Order / Customer / SKU / Location..." style="max-width:300px"/>
+      <input id="historyFilterText" placeholder="Filter Order / Customer / SKU / Location..." style="max-width:280px"/>
       <button id="historyClearFilterBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400">Clear filter</button>
+    </div>
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px;margin-top:6px">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;margin:0">Order date
+        <input id="historyDateFrom" type="date" style="width:auto;padding:5px 8px"/>
+        <span>→</span>
+        <input id="historyDateTo" type="date" style="width:auto;padding:5px 8px"/>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;margin:0">Location
+        <select id="historyLocationFilter" style="width:auto;padding:5px 8px"><option value="">All</option></select>
+      </label>
+      <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;margin:0">Exported by
+        <select id="historyExportedByFilter" style="width:auto;padding:5px 8px"><option value="">All</option></select>
+      </label>
+      <button id="historyClearAllFiltersBtn" type="button" class="secondary" style="width:auto;padding:5px 10px;font-size:12px;font-weight:400">Clear all filters</button>
     </div>
     <div class="hint" style="margin:6px 0">Every "Export to Nav SO" logs one row per Order + SKU + Location here. An order already logged here won't be logged again even if re-exported. Edit or delete any row, or add one manually.</div>
     <div id="historyTableWrap" style="border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:calc(100vh - 220px)">
@@ -1308,18 +1322,48 @@ async function renderHistoryTab(){
       from += PAGE;
     }
     HISTORY_ROWS = all;
+    populateHistoryFilterOptions();
     renderHistoryRows();
   } catch (e){
     body.innerHTML = `<tr><td colspan="9">Failed to load: ${esc(e.message)}</td></tr>`;
   }
 }
+// Rebuild the Location / Exported-by dropdown options from whatever's
+// currently loaded, preserving the user's current selection if it's still
+// a valid option after the refresh.
+function populateHistoryFilterOptions(){
+  const fillSelect = (sel, values) => {
+    if (!sel) return;
+    const prev = sel.value;
+    const opts = Array.from(new Set(values.filter(Boolean))).sort();
+    sel.innerHTML = `<option value="">All</option>` + opts.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+    if (opts.includes(prev)) sel.value = prev;
+  };
+  fillSelect($('historyLocationFilter'), HISTORY_ROWS.map(r => r.location_code));
+  fillSelect($('historyExportedByFilter'), HISTORY_ROWS.map(r => r.exported_by));
+}
 function renderHistoryRows(){
   const body = $('historyBody'); if (!body) return;
   const filter = ($('historyFilterText') ? $('historyFilterText').value : '').trim().toLowerCase();
+  const dateFrom = $('historyDateFrom') ? $('historyDateFrom').value : '';
+  const dateTo   = $('historyDateTo')   ? $('historyDateTo').value   : '';
+  const locWant  = $('historyLocationFilter') ? $('historyLocationFilter').value : '';
+  const byWant   = $('historyExportedByFilter') ? $('historyExportedByFilter').value : '';
   let rows = HISTORY_ROWS;
   if (filter){
     rows = rows.filter(r => [r.order_number, r.customer, r.sku, r.location_code].join(' ').toLowerCase().includes(filter));
   }
+  if (dateFrom || dateTo){
+    rows = rows.filter(r => {
+      if (!r.order_date) return false;
+      const d = String(r.order_date).slice(0,10); // compare as YYYY-MM-DD
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo   && d > dateTo)   return false;
+      return true;
+    });
+  }
+  if (locWant) rows = rows.filter(r => r.location_code === locWant);
+  if (byWant)  rows = rows.filter(r => (r.exported_by || '') === byWant);
   if ($('historyCount')) $('historyCount').textContent = `${rows.length.toLocaleString()} rows`;
   if (!rows.length){ body.innerHTML = `<tr><td colspan="9">No history rows.</td></tr>`; return; }
   body.innerHTML = rows.map(r => `<tr data-id="${r.id}">
@@ -1340,6 +1384,14 @@ function renderHistoryRows(){
 $('historyRefreshBtn') && $('historyRefreshBtn').addEventListener('click', renderHistoryTab);
 $('historyFilterText') && $('historyFilterText').addEventListener('input', renderHistoryRows);
 $('historyClearFilterBtn') && $('historyClearFilterBtn').addEventListener('click', () => { $('historyFilterText').value = ''; renderHistoryRows(); });
+['historyDateFrom','historyDateTo','historyLocationFilter','historyExportedByFilter'].forEach(id => {
+  const el = $(id); if (el) el.addEventListener('change', renderHistoryRows);
+});
+$('historyClearAllFiltersBtn') && $('historyClearAllFiltersBtn').addEventListener('click', () => {
+  ['historyFilterText','historyDateFrom','historyDateTo'].forEach(id => { if ($(id)) $(id).value = ''; });
+  ['historyLocationFilter','historyExportedByFilter'].forEach(id => { if ($(id)) $(id).value = ''; });
+  renderHistoryRows();
+});
 
 // Edit / Delete — event delegation on the tbody.
 document.getElementById('historyBody')?.addEventListener('click', async (e) => {
