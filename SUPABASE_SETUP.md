@@ -52,6 +52,25 @@ create table if not exists exported_orders (
   exported_by  text
 );
 
+-- History tab — one row per Order + SKU + Location allocated by "Export to
+-- Nav SO". An order that already has any row here is never re-logged, even
+-- if manually un-exported and re-exported later. Full CRUD is available on
+-- the History tab (edit/delete/add).
+create table if not exists nav_so_export_history (
+  id            bigserial   primary key,
+  order_number  text        not null,
+  order_date    timestamptz,
+  customer      text,
+  sku           text        not null,
+  location_code text        not null,
+  qty           numeric     not null default 0,
+  exported_at   timestamptz not null default now(),
+  exported_by   text,
+  unique (order_number, sku, location_code)
+);
+create index if not exists nav_so_export_history_order_idx on nav_so_export_history (order_number);
+create index if not exists nav_so_export_history_exported_at_idx on nav_so_export_history (exported_at desc);
+
 -- ============================================================
 -- ROW-LEVEL SECURITY
 -- Single-workspace model: anyone with the anon key can read + write.
@@ -61,6 +80,7 @@ alter table app_settings    enable row level security;
 alter table shared_files    enable row level security;
 alter table activity_log    enable row level security;
 alter table exported_orders enable row level security;
+alter table nav_so_export_history enable row level security;
 
 drop policy if exists "settings: read"   on app_settings;
 drop policy if exists "settings: write"  on app_settings;
@@ -74,6 +94,10 @@ drop policy if exists "exported: read"   on exported_orders;
 drop policy if exists "exported: write"  on exported_orders;
 drop policy if exists "exported: update" on exported_orders;
 drop policy if exists "exported: delete" on exported_orders;
+drop policy if exists "history: read"   on nav_so_export_history;
+drop policy if exists "history: write"  on nav_so_export_history;
+drop policy if exists "history: update" on nav_so_export_history;
+drop policy if exists "history: delete" on nav_so_export_history;
 
 create policy "settings: read"   on app_settings for select using (true);
 create policy "settings: write"  on app_settings for insert with check (true);
@@ -91,9 +115,15 @@ create policy "exported: write"  on exported_orders for insert with check (true)
 create policy "exported: update" on exported_orders for update using (true);
 create policy "exported: delete" on exported_orders for delete using (true);
 
--- PostgREST needs to see the new table + reload its schema cache.
+create policy "history: read"   on nav_so_export_history for select using (true);
+create policy "history: write"  on nav_so_export_history for insert with check (true);
+create policy "history: update" on nav_so_export_history for update using (true);
+create policy "history: delete" on nav_so_export_history for delete using (true);
+
+-- PostgREST needs to see the new tables + reload its schema cache.
 grant usage on schema public to anon, authenticated;
 grant select, insert, update, delete on public.exported_orders to anon, authenticated;
+grant select, insert, update, delete on public.nav_so_export_history to anon, authenticated;
 notify pgrst, 'reload schema';
 ```
 
