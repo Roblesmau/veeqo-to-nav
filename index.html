@@ -154,6 +154,7 @@
 <div class="tabs" role="tablist">
   <button class="tab-btn active" data-tab="setup" role="tab">Setup</button>
   <button class="tab-btn" data-tab="orders" role="tab">Orders</button>
+  <button class="tab-btn" data-tab="history" role="tab">History</button>
 </div>
 <main>
   <div class="tab-panel active" id="tab-setup">
@@ -491,6 +492,25 @@
     </div>
   </section>
   </div>
+
+  <div class="tab-panel" id="tab-history">
+  <section>
+    <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <button id="historyRefreshBtn" type="button" style="width:auto;padding:6px 14px">Refresh</button>
+      <button id="historyAddBtn" type="button" class="ok" style="width:auto;padding:6px 14px">+ Add row</button>
+      <span class="pill" id="historyCount">0 rows</span>
+      <span class="grow"></span>
+      <input id="historyFilterText" placeholder="Filter Order / Customer / SKU / Location..." style="max-width:300px"/>
+      <button id="historyClearFilterBtn" type="button" class="secondary" style="width:auto;padding:6px 10px;font-size:12px;font-weight:400">Clear filter</button>
+    </div>
+    <div class="hint" style="margin:6px 0">Every "Export to Nav SO" logs one row per Order + SKU + Location here. An order already logged here won't be logged again even if re-exported. Edit or delete any row, or add one manually.</div>
+    <div id="historyTableWrap" style="border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:calc(100vh - 220px)">
+      <table id="historyTable"><thead><tr>
+        <th>Order</th><th>Order Date</th><th>Customer</th><th>SKU</th><th>Location</th><th>Qty</th><th>Exported At</th><th>Exported By</th><th>Actions</th>
+      </tr></thead><tbody id="historyBody"></tbody></table>
+    </div>
+  </section>
+  </div>
 </main>
 
 <script>
@@ -526,6 +546,7 @@ function activateTab(name){
   } else {
     stopAutoRefresh();
   }
+  if (name === 'history' && typeof renderHistoryTab === 'function') renderHistoryTab();
 }
 function startAutoRefresh(){
   stopAutoRefresh();
@@ -969,6 +990,11 @@ let EXPORTED_ORDERS = new Set();
 let SHIPPED_ORDER_NUMS = new Set();
 let CANCELLED_ORDER_NUMS = new Set();
 
+// Order numbers that already have >=1 row in public.nav_so_export_history
+// (History tab). Loaded on boot. Export to Nav SO consults this to avoid
+// re-logging the same order a second time (e.g. after a manual un-export).
+let HISTORY_ORDER_NUMS = new Set();
+
 // Items source — 'mau' (default, public.mau_main_items) or 'excel' (legacy upload).
 // Declared up here so the boot wiring further down (which calls
 // applyItemsSourceUI synchronously) doesn't trip the TDZ on these `let`s.
@@ -1194,6 +1220,206 @@ async function clearExportedOrders(){
     log('Could not clear exported flags in Supabase: ' + e.message, 'badge-warn');
   }
 }
+
+// ============================================================
+// Nav SO export history (History tab, public.nav_so_export_history).
+// Every "Export to Nav SO" click logs one row per Order + SKU + Location
+// allocated. An order that already has >=1 history row is never re-logged
+// (see HISTORY_ORDER_NUMS), even if it gets manually un-exported and
+// re-exported later. Full CRUD (edit/delete/create) is exposed on the
+// History tab for corrections.
+// ============================================================
+async function loadHistoryOrderNums(){
+  if (!sb) return;
+  try {
+    const all = new Set();
+    const PAGE = 1000;
+    let from = 0;
+    while (true){
+      const { data, error } = await sb
+        .from('nav_so_export_history')
+        .select('order_number')
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      for (const r of data) if (r.order_number) all.add(String(r.order_number));
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    HISTORY_ORDER_NUMS = all;
+  } catch (e){
+    log('Could not load Nav SO history order list: ' + e.message, 'badge-warn');
+  }
+}
+
+// Called right after a successful "Export to Nav SO" download. Skips any
+// order that already has a history row (HISTORY_ORDER_NUMS), upserts the
+// rest on (order_number, sku, location_code) as a safety net against
+// double-clicks, then updates the in-memory set + re-renders if the History
+// tab happens to be open.
+async function pushExportHistory(historyRows){
+  const rows = (historyRows || []).filter(r => !HISTORY_ORDER_NUMS.has(String(r.orderNumber)));
+  if (!rows.length) return;
+  if (!sb){
+    log('Supabase not configured — Nav SO history was not recorded.', 'badge-warn');
+    return;
+  }
+  try {
+    const who = await ensureDisplayName();
+    const payload = rows.map(r => ({
+      order_number: String(r.orderNumber),
+      order_date: r.orderDate || null,
+      customer: r.customer || '',
+      sku: r.sku,
+      location_code: r.location,
+      qty: Number(r.qty) || 0,
+      exported_by: who,
+    }));
+    const { error } = await sb.from('nav_so_export_history').upsert(payload, { onConflict: 'order_number,sku,location_code' });
+    if (error) throw error;
+    for (const r of rows) HISTORY_ORDER_NUMS.add(String(r.orderNumber));
+    const distinctOrders = new Set(rows.map(r => String(r.orderNumber))).size;
+    log(`Nav SO history: logged ${rows.length} row(s) across ${distinctOrders} order(s).`, 'badge-ok');
+    if (document.querySelector('.tab-btn.active')?.dataset.tab === 'history') renderHistoryTab();
+  } catch (e){
+    log('Could not write Nav SO history: ' + e.message, 'badge-warn');
+  }
+}
+
+let HISTORY_ROWS = []; // last-loaded rows, cached for client-side filtering
+async function renderHistoryTab(){
+  const body = $('historyBody'); if (!body) return;
+  if (!sb){ body.innerHTML = `<tr><td colspan="9">Supabase not configured. Set the URL + anon key in Setup → Panel 1B.</td></tr>`; return; }
+  body.innerHTML = `<tr><td colspan="9">Loading…</td></tr>`;
+  try {
+    const all = [];
+    const PAGE = 1000;
+    let from = 0;
+    while (true){
+      const { data, error } = await sb
+        .from('nav_so_export_history')
+        .select('*')
+        .order('exported_at', { ascending: false })
+        .range(from, from + PAGE - 1);
+      if (error) throw error;
+      if (!data || !data.length) break;
+      all.push(...data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    HISTORY_ROWS = all;
+    renderHistoryRows();
+  } catch (e){
+    body.innerHTML = `<tr><td colspan="9">Failed to load: ${esc(e.message)}</td></tr>`;
+  }
+}
+function renderHistoryRows(){
+  const body = $('historyBody'); if (!body) return;
+  const filter = ($('historyFilterText') ? $('historyFilterText').value : '').trim().toLowerCase();
+  let rows = HISTORY_ROWS;
+  if (filter){
+    rows = rows.filter(r => [r.order_number, r.customer, r.sku, r.location_code].join(' ').toLowerCase().includes(filter));
+  }
+  if ($('historyCount')) $('historyCount').textContent = `${rows.length.toLocaleString()} rows`;
+  if (!rows.length){ body.innerHTML = `<tr><td colspan="9">No history rows.</td></tr>`; return; }
+  body.innerHTML = rows.map(r => `<tr data-id="${r.id}">
+    <td data-field="order_number">${esc(r.order_number)}</td>
+    <td data-field="order_date">${esc(r.order_date ? new Date(r.order_date).toLocaleDateString() : '')}</td>
+    <td data-field="customer">${esc(r.customer || '')}</td>
+    <td data-field="sku">${esc(r.sku)}</td>
+    <td data-field="location_code">${esc(r.location_code)}</td>
+    <td data-field="qty">${esc(r.qty)}</td>
+    <td>${esc(r.exported_at ? new Date(r.exported_at).toLocaleString() : '')}</td>
+    <td>${esc(r.exported_by || '')}</td>
+    <td>
+      <button type="button" class="secondary history-edit-btn" style="width:auto;padding:3px 8px;font-size:11px">Edit</button>
+      <button type="button" class="secondary history-del-btn" style="width:auto;padding:3px 8px;font-size:11px">Delete</button>
+    </td>
+  </tr>`).join('');
+}
+$('historyRefreshBtn') && $('historyRefreshBtn').addEventListener('click', renderHistoryTab);
+$('historyFilterText') && $('historyFilterText').addEventListener('input', renderHistoryRows);
+$('historyClearFilterBtn') && $('historyClearFilterBtn').addEventListener('click', () => { $('historyFilterText').value = ''; renderHistoryRows(); });
+
+// Edit / Delete — event delegation on the tbody.
+document.getElementById('historyBody')?.addEventListener('click', async (e) => {
+  const tr = e.target.closest('tr[data-id]'); if (!tr) return;
+  const id = tr.dataset.id;
+
+  if (e.target.closest('.history-del-btn')){
+    if (!confirm('Delete this history row? This cannot be undone.')) return;
+    try {
+      const { error } = await sb.from('nav_so_export_history').delete().eq('id', id);
+      if (error) throw error;
+      HISTORY_ROWS = HISTORY_ROWS.filter(r => String(r.id) !== String(id));
+      // If that was the order's last row, allow it to be logged again on a future export.
+      const orderNum = tr.querySelector('[data-field="order_number"]').textContent;
+      if (!HISTORY_ROWS.some(r => String(r.order_number) === orderNum)) HISTORY_ORDER_NUMS.delete(orderNum);
+      renderHistoryRows();
+      logActivity(`Deleted Nav SO history row (order ${orderNum})`);
+    } catch (err){
+      alert('Delete failed: ' + err.message);
+    }
+    return;
+  }
+
+  if (e.target.closest('.history-edit-btn')){
+    const editing = tr.classList.toggle('editing');
+    const cells = tr.querySelectorAll('td[data-field]');
+    if (editing){
+      cells.forEach(td => {
+        const field = td.dataset.field;
+        const raw = HISTORY_ROWS.find(r => String(r.id) === String(id))?.[field] ?? '';
+        const value = field === 'order_date' ? String(raw || '').slice(0,10) : raw;
+        const type = field === 'order_date' ? 'date' : (field === 'qty' ? 'number' : 'text');
+        td.innerHTML = `<input type="${type}" value="${esc(value)}" style="padding:3px 6px;font-size:12px" data-field="${field}"/>`;
+      });
+      e.target.textContent = 'Save';
+    } else {
+      const payload = {};
+      cells.forEach(td => {
+        const input = td.querySelector('input');
+        const field = td.dataset.field;
+        payload[field] = field === 'qty' ? (Number(input.value) || 0) : input.value;
+      });
+      try {
+        const { error } = await sb.from('nav_so_export_history').update(payload).eq('id', id);
+        if (error) throw error;
+        const idx = HISTORY_ROWS.findIndex(r => String(r.id) === String(id));
+        if (idx >= 0) HISTORY_ROWS[idx] = { ...HISTORY_ROWS[idx], ...payload };
+        logActivity(`Edited Nav SO history row (order ${payload.order_number})`);
+      } catch (err){
+        alert('Save failed: ' + err.message);
+      }
+      renderHistoryRows();
+    }
+  }
+});
+
+// Add row — simple prompt-based creation, consistent with the app's existing
+// lightweight dialog style (e.g. the display-name prompt).
+$('historyAddBtn') && $('historyAddBtn').addEventListener('click', async () => {
+  if (!sb){ alert('Supabase not configured.'); return; }
+  const order_number = prompt('Order number:'); if (!order_number) return;
+  const sku = prompt('SKU:'); if (!sku) return;
+  const location_code = prompt('Location code (e.g. BIN-ECAMZ):'); if (!location_code) return;
+  const qty = Number(prompt('Qty:', '1')) || 0;
+  const customer = prompt('Customer (optional):') || '';
+  const order_date = prompt('Order date (YYYY-MM-DD, optional):') || null;
+  try {
+    const who = await ensureDisplayName();
+    const { error } = await sb.from('nav_so_export_history').upsert(
+      { order_number, sku, location_code, qty, customer, order_date, exported_by: who },
+      { onConflict: 'order_number,sku,location_code' }
+    );
+    if (error) throw error;
+    HISTORY_ORDER_NUMS.add(String(order_number));
+    logActivity(`Manually added Nav SO history row (order ${order_number})`);
+    renderHistoryTab();
+  } catch (e){
+    alert('Add failed: ' + e.message);
+  }
+});
 
 async function sbLoadFile(kind){
   if (!sb) return null;
@@ -2232,6 +2458,8 @@ if ($('refreshItemsMauBtn')){
   refreshActivityFeed();
   // Load the team-shared exported-orders set so flags are visible on first paint.
   loadExportedOrders();
+  // Load which orders already have Nav SO history rows, so re-exports skip them.
+  loadHistoryOrderNums();
   // Render the store-icon legend (safe here — STORE_ICONS is initialized by now).
   renderStoreLegend();
 })();
@@ -3499,6 +3727,8 @@ function buildNavSORows(){
   const buckets = new Map();                 // sku|code|netUnit -> qty
   const unfulfilled = new Map();             // sku -> { needed, allocated, ecom }
   const contributedOrders = new Set();       // order numbers with >=1 allocated unit
+  const historyBuckets = new Map();          // orderNum|sku|code -> qty (for the History tab log)
+  const orderMeta = new Map();               // orderNum -> { date, customer }
   function trackUnfulfilled(sku, ecom, needed, allocated){
     if (needed <= allocated) return;
     const e = unfulfilled.get(sku) || { sku, ecom, needed:0, allocated:0 };
@@ -3531,6 +3761,7 @@ function buildNavSORows(){
 
       // Strict allocation — every bin respects its real available stock.
       let allocated = 0;
+      const orderNum = String(o.number || o.id || '');
       for (let i = 0; i < NAV_SO_PRIORITY.length && needed > 0; i++){
         const code = NAV_SO_PRIORITY[i];
         const avail = rem[code] || 0;
@@ -3541,12 +3772,24 @@ function buildNavSORows(){
           rem[code] = avail - take;
           needed -= take;
           allocated += take;
+          // History log — one row per order+sku+location combination allocated
+          // in this export (independent of the Type/price bucket key above).
+          const hKey = `${orderNum}|${localSku}|${code}`;
+          historyBuckets.set(hKey, (historyBuckets.get(hKey) || 0) + take);
+          if (!orderMeta.has(orderNum)){
+            orderMeta.set(orderNum, { date: o.created_at || '', customer: customerOf(o) });
+          }
         }
       }
-      if (allocated > 0) contributedOrders.add(String(o.number || o.id || ''));
+      if (allocated > 0) contributedOrders.add(orderNum);
       trackUnfulfilled(localSku, ecom, originalNeeded, allocated);
     }
   }
+  const historyRows = [...historyBuckets.entries()].map(([key, qty]) => {
+    const [orderNumber, sku, location] = key.split('|');
+    const meta = orderMeta.get(orderNumber) || {};
+    return { orderNumber, orderDate: meta.date || '', customer: meta.customer || '', sku, location, qty };
+  });
 
   // Sort: Location Code ASC, then SKU ASC, then net unit price ASC
   const entries = [...buckets.entries()].map(([key, qty]) => {
@@ -3565,7 +3808,7 @@ function buildNavSORows(){
     Quantity: e.qty,
     'Net Price Paid': e.netUnit,
   }));
-  return { rows, unfulfilled: [...unfulfilled.values()], contributedOrders };
+  return { rows, unfulfilled: [...unfulfilled.values()], contributedOrders, historyRows };
 }
 
 // =========================================================
@@ -3706,7 +3949,7 @@ $('exportOrderByLocBtn').addEventListener('click', () => {
 
 $('exportNavSOBtn').addEventListener('click', () => {
   if (!ORDERS.length){ alert('No orders fetched yet.'); return; }
-  const { rows, unfulfilled, contributedOrders } = buildNavSORows();
+  const { rows, unfulfilled, contributedOrders, historyRows } = buildNavSORows();
   if (!rows.length && !unfulfilled.length){
     const allExported = ORDERS.length && ORDERS.every(o => EXPORTED_ORDERS.has(String(o.number || o.id || '')));
     alert(allExported
@@ -3765,6 +4008,11 @@ $('exportNavSOBtn').addEventListener('click', () => {
   // detection. Fully-unfulfillable / unmapped orders are not in the set.
   // Kept last so the companion file above still sees these orders.
   markOrdersExported([...contributedOrders]);
+
+  // Log to the History tab (public.nav_so_export_history). pushExportHistory
+  // itself skips any order already logged, so this is safe to call on every
+  // export without creating duplicate rows.
+  pushExportHistory(historyRows);
 });
 
 // Swap "Created from/to" labels to "Shipped from/to" when status=shipped, so
