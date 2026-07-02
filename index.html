@@ -1640,6 +1640,21 @@ function renderStoreLegend(){
   items.push(`<span style="display:inline-flex;align-items:center;gap:4px"><span style="font-size:15px">🏬</span>Other</span>`);
   el.innerHTML = items.join('');
 }
+// Whether an order should be skipped by an EXPORT builder because the
+// "Hide cancelled" / "Hide already shipped" checkboxes are checked on the
+// Orders tab. Uses the same fetch-time sets + per-record fallback as
+// previewOrders(), so an export always matches exactly what's visible in
+// the table for these two toggles — never more.
+function isHiddenByCancelShipToggle(o){
+  const num = String(o.number || o.id || '');
+  if ($('hideCancelled') && $('hideCancelled').checked){
+    if (CANCELLED_ORDER_NUMS.has(num) || isCancelledOrder(o)) return true;
+  }
+  if ($('hideShipped') && $('hideShipped').checked){
+    if (SHIPPED_ORDER_NUMS.has(num) || isShippedOrder(o)) return true;
+  }
+  return false;
+}
 // Colored status dot for the orders table: red=cancelled, green=shipped,
 // yellow=still awaiting. Cancelled wins over shipped if a record somehow
 // carries both signals (shouldn't happen, but cancellation is the more
@@ -3395,6 +3410,7 @@ function updateOrderStats(){
 function buildNavRows(){
   const rows = [];
   for (const o of ORDERS){
+    if (isHiddenByCancelShipToggle(o)) continue; // matches Hide cancelled / Hide already shipped on the Orders tab
     const lis = o.line_items || [];
     for (const li of lis){
       const sv = li.sellable || li.product || {};
@@ -3491,6 +3507,7 @@ function buildNavSORows(){
 
   for (const o of sortedOrders){
     if (EXPORTED_ORDERS.has(String(o.number || o.id || ''))) continue; // already sent to Nav — exclude
+    if (isHiddenByCancelShipToggle(o)) continue; // matches Hide cancelled / Hide already shipped on the Orders tab
     for (const li of (o.line_items || [])){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
@@ -3584,6 +3601,7 @@ function buildOrderByLocRows(){
   for (const o of sortedOrders){
     const orderNum = String(o.number || o.order_number || o.id || '');
     if (EXPORTED_ORDERS.has(orderNum)) continue; // already sent to Nav — exclude
+    if (isHiddenByCancelShipToggle(o)) continue; // matches Hide cancelled / Hide already shipped on the Orders tab
     for (const li of (o.line_items || [])){
       const sv = li.sellable || li.product || {};
       const rawSku = sv.sku_code || sv.sku || li.sku_code || li.sku || '';
