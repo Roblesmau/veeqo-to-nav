@@ -1782,13 +1782,19 @@ function previewOrders(){
       // Cumulative demand for insufficient detection. Orders already exported
       // to Nav are excluded entirely — their stock is committed, so they're
       // neither flagged nor counted against later orders' availability.
+      // Cancelled orders never consumed real stock, and shipped orders'
+      // consumption is already reflected in inventory_available — counting
+      // either into the tally double-subtracts stock and produces false
+      // "insufficient" flags on genuinely open orders later in the list
+      // (this became reachable once Status became multi-select and users
+      // started including Shipped/Cancelled to detect split orders).
       const orderNumber = o.number || o.id || '';
       const exported = EXPORTED_ORDERS.has(String(orderNumber));
       const cancelled = CANCELLED_ORDER_NUMS.has(String(orderNumber)) || isCancelledOrder(o);
       const shipped   = SHIPPED_ORDER_NUMS.has(String(orderNumber))   || isShippedOrder(o);
       const demandKey = cleanItem(lookupSku) || cleanItem(rawSku) || cleanItem(ecom);
       let insufficient = false;
-      if (!exported && demandKey){
+      if (!exported && !cancelled && !shipped && demandKey){
         const usedBefore = cumDemand[demandKey] || 0;
         cumDemand[demandKey] = usedBefore + qty;
         insufficient = (usedBefore + qty) > totalAvail;
