@@ -498,6 +498,7 @@
     <div class="toolbar" style="align-items:center;flex-wrap:wrap;gap:8px">
       <button id="historyRefreshBtn" type="button" style="width:auto;padding:6px 14px">Refresh</button>
       <button id="historyAddBtn" type="button" class="ok" style="width:auto;padding:6px 14px">+ Add row</button>
+      <button id="historyExportBtn" type="button" class="ok" style="width:auto;padding:6px 14px;background:#d4a017;color:white" title="Download the rows currently shown (respects every active filter) as an Excel file">Export filtered list</button>
       <span class="pill" id="historyCount">0 rows</span>
       <span class="grow"></span>
       <input id="historyFilterText" placeholder="Filter Order / Customer / SKU / Location..." style="max-width:280px"/>
@@ -671,6 +672,11 @@ loadPrefs();
   const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
   if (!$('fromDate').value) $('fromDate').value = fmt(weekAgo);
   if (!$('toDate').value) $('toDate').value = fmt(today);
+  // History tab's Order-date filter defaults to today only (not a 7-day
+  // window) — the tab is meant to answer "what did we export today?" first.
+  const todayStr = fmt(today);
+  if ($('historyDateFrom') && !$('historyDateFrom').value) $('historyDateFrom').value = todayStr;
+  if ($('historyDateTo')   && !$('historyDateTo').value)   $('historyDateTo').value   = todayStr;
 })();
 
 // ============================================================
@@ -1342,8 +1348,11 @@ function populateHistoryFilterOptions(){
   fillSelect($('historyLocationFilter'), HISTORY_ROWS.map(r => r.location_code));
   fillSelect($('historyExportedByFilter'), HISTORY_ROWS.map(r => r.exported_by));
 }
-function renderHistoryRows(){
-  const body = $('historyBody'); if (!body) return;
+// Applies every active History-tab filter (text, order-date range, location,
+// exported-by) to HISTORY_ROWS. Shared by the table render and the
+// "Export filtered" button so the exported file always matches what's on
+// screen.
+function getFilteredHistoryRows(){
   const filter = ($('historyFilterText') ? $('historyFilterText').value : '').trim().toLowerCase();
   const dateFrom = $('historyDateFrom') ? $('historyDateFrom').value : '';
   const dateTo   = $('historyDateTo')   ? $('historyDateTo').value   : '';
@@ -1364,6 +1373,11 @@ function renderHistoryRows(){
   }
   if (locWant) rows = rows.filter(r => r.location_code === locWant);
   if (byWant)  rows = rows.filter(r => (r.exported_by || '') === byWant);
+  return rows;
+}
+function renderHistoryRows(){
+  const body = $('historyBody'); if (!body) return;
+  const rows = getFilteredHistoryRows();
   if ($('historyCount')) $('historyCount').textContent = `${rows.length.toLocaleString()} rows`;
   if (!rows.length){ body.innerHTML = `<tr><td colspan="9">No history rows.</td></tr>`; return; }
   body.innerHTML = rows.map(r => `<tr data-id="${r.id}">
@@ -1471,6 +1485,28 @@ $('historyAddBtn') && $('historyAddBtn').addEventListener('click', async () => {
   } catch (e){
     alert('Add failed: ' + e.message);
   }
+});
+
+// Export exactly what's currently shown — reuses the same filter function
+// the table render uses, so the file always matches the screen.
+$('historyExportBtn') && $('historyExportBtn').addEventListener('click', () => {
+  const rows = getFilteredHistoryRows();
+  if (!rows.length){ alert('Nothing to export — no history rows match the current filters.'); return; }
+  const outRows = rows.map(r => ({
+    'Order': r.order_number,
+    'Order Date': r.order_date ? new Date(r.order_date).toLocaleDateString() : '',
+    'Customer': r.customer || '',
+    'SKU': r.sku,
+    'Location': r.location_code,
+    'Qty': r.qty,
+    'Exported At': r.exported_at ? new Date(r.exported_at).toLocaleString() : '',
+    'Exported By': r.exported_by || '',
+  }));
+  const ws = XLSX.utils.json_to_sheet(outRows, { header: ['Order','Order Date','Customer','SKU','Location','Qty','Exported At','Exported By'] });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Nav SO History');
+  XLSX.writeFile(wb, `nav-so-history-${stamp()}.xlsx`);
+  log(`Nav SO history: exported ${rows.length.toLocaleString()} filtered row(s).`, 'badge-ok');
 });
 
 async function sbLoadFile(kind){
