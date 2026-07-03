@@ -1558,6 +1558,26 @@ $('apiKey').addEventListener('change', () => { if ($('apiKey').value) loadStores
 // And if the Base URL changes (e.g. switching to proxy)
 $('baseUrl').addEventListener('change', () => { if ($('apiKey').value) loadStores({ silent: true }); });
 
+// Runs async task functions with a concurrency cap. Used for the per-
+// status × per-channel order fetch below: each (status, channel) pair's own
+// pagination must stay sequential (page N depends on page N-1 not being a
+// short page), but the pairs themselves are independent and can overlap.
+// A cap (not unlimited Promise.all) avoids hammering the Veeqo API when many
+// statuses/stores are selected at once.
+async function runWithConcurrency(tasks, limit){
+  const results = new Array(tasks.length);
+  let next = 0;
+  async function worker(){
+    while (true){
+      const i = next++;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
+}
+
 function surfaceError(label, e){
   console.error(label, e);
   log(`${label}: ${e.message}`, 'badge-err');
@@ -1605,28 +1625,35 @@ $('fetchBtn').addEventListener('click', async () => {
     const maxPages = parseInt($('maxPages').value || '20',10);
     const channels = storeIds.length ? storeIds : [null];
     const statuses = statusList.length ? statusList : [undefined]; // [undefined] = no status filter
-    log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'} × ${statuses.length} status${statuses.length===1?'':'es'})`);
+    // Each (status, channel) pair is fetched by its own task; pages within a
+    // pair stay sequential (page N depends on page N-1 not being short), but
+    // independent pairs run concurrently (capped) instead of one-at-a-time —
+    // this is what used to make a multi-status fetch take statuses×channels
+    // times as long as a single-status fetch.
+    const pairs = [];
+    for (const st of statuses) for (const ch of channels) pairs.push([st, ch]);
+    const FETCH_CONCURRENCY = 4;
+    log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'} × ${statuses.length} status${statuses.length===1?'':'es'} = ${pairs.length} fetch${pairs.length===1?'':'es'}, up to ${FETCH_CONCURRENCY} at a time)`);
 
-    for (const st of statuses){
-      for (const ch of channels){
-        const params = { ...baseParams };
-        if (st) params.status = st;
-        if (ch) params.channel_id = ch;
-        const label = `${st || 'any'}${ch ? ` · channel ${ch}` : ''}`;
-        for (let page=1; page<=maxPages; page++){
-          const data = await veeqoGet('/orders', { ...params, page });
-          const arr = Array.isArray(data) ? data : (data.orders || []);
-          if (!arr.length){ log(`${label} p${page}: no more.`); break; }
-          // Stamp the channel we fetched these orders against so resolveMapping()
-          // can route per-store regardless of how Veeqo populates o.channel.*
-          // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
-          if (ch) for (const o of arr) o.__storeId = String(ch);
-          ORDERS.push(...arr);
-          log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
-          if (arr.length < (params.page_size|0)) break;
-        }
+    const tasks = pairs.map(([st, ch]) => async () => {
+      const params = { ...baseParams };
+      if (st) params.status = st;
+      if (ch) params.channel_id = ch;
+      const label = `${st || 'any'}${ch ? ` · channel ${ch}` : ''}`;
+      for (let page=1; page<=maxPages; page++){
+        const data = await veeqoGet('/orders', { ...params, page });
+        const arr = Array.isArray(data) ? data : (data.orders || []);
+        if (!arr.length){ log(`${label} p${page}: no more.`); break; }
+        // Stamp the channel we fetched these orders against so resolveMapping()
+        // can route per-store regardless of how Veeqo populates o.channel.*
+        // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
+        if (ch) for (const o of arr) o.__storeId = String(ch);
+        ORDERS.push(...arr);
+        log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
+        if (arr.length < (params.page_size|0)) break;
       }
-    }
+    });
+    await runWithConcurrency(tasks, FETCH_CONCURRENCY);
     // Build shipped / cancelled exclusion sets from ALL fetched records BEFORE
     // dedupe, so a shipped/cancelled twin can hide its awaiting sibling even if
     // dedupe keeps the awaiting record.
@@ -2016,11 +2043,20 @@ let SORT_COL = '';
 let SORT_DIR = 'asc';
 const SELECTED_ORDERS = new Set();
 
-function previewOrders(){
-  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
+// The expensive part of previewOrders(): resolves mapping, bin stock, and
+// cancelled/shipped/insufficient status for every line item. Cached in
+// FLAT_ROWS_CACHE so pure display interactions (typing in the filter box,
+// toggling Hide cancelled/shipped/Insufficient-only, clicking a sort header)
+// can skip straight to renderOrdersFromFlat() instead of redoing this work.
+// Every call site that actually changes underlying data (fetch, bin refresh,
+// mapping reload, exported-flag change, etc.) still calls previewOrders(),
+// which always rebuilds — this cache is purely an optimization, never a
+// source of staleness, because only previewOrders() itself writes it.
+let FLAT_ROWS_CACHE = null;
 
-  // 1. Build flat rows. Sort by created_at ascending first so cumulative
-  // demand is computed in the right order (oldest order eats stock first).
+function buildFlatOrderRows(){
+  // Sort by created_at ascending first so cumulative demand is computed in
+  // the right order (oldest order eats stock first).
   const sortedOrders = [...ORDERS].sort((a, b) => String(a.created_at||'').localeCompare(String(b.created_at||'')));
   // Shipped / cancelled detection uses the fetch-time sets (built pre-dedupe
   // from every fetched record) unioned with this record's own signals — so a
@@ -2090,6 +2126,11 @@ function previewOrders(){
       });
     }
   }
+  return flat;
+}
+
+function renderOrdersFromFlat(flat){
+  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 2. Apply text filter
   // Scanners sometimes prepend leading zeros to UPCs (e.g. "09856" on the
@@ -2199,6 +2240,22 @@ function previewOrders(){
   $('resultBody').innerHTML = out;
 
   updateBulkActionUI();
+}
+
+// Full refresh: rebuilds the expensive per-row dataset from ORDERS/BIN_MAP/
+// mapping/exported-state, then renders. Call this whenever any of that
+// underlying data actually changed.
+function previewOrders(){
+  FLAT_ROWS_CACHE = buildFlatOrderRows();
+  renderOrdersFromFlat(FLAT_ROWS_CACHE);
+}
+// Cheap refresh: reuses the last built dataset. Safe for pure display
+// interactions (text filter, sort, Hide/Insufficient toggles) that don't
+// change any underlying order/bin/mapping data. Falls back to a full
+// rebuild if nothing has been built yet.
+function refreshOrdersView(){
+  if (!FLAT_ROWS_CACHE){ previewOrders(); return; }
+  renderOrdersFromFlat(FLAT_ROWS_CACHE);
 }
 
 function sortValueForCol(r, col){
@@ -3501,22 +3558,29 @@ function renderResult(){
     `<tr>${cols.map(c => `<td${c==='match' && r.match==='NO' ? ' class="badge-warn"' : ''}>${esc(r[c])}</td>`).join('')}<td>${veeqoLinkBtn(r.order_number)}</td></tr>`
   ).join('');
 }
+// Debounced so fast typing/scanning doesn't trigger a full re-render on
+// every keystroke — only once input pauses for ~180ms.
+let _filterDebounceTimer = null;
 $('filterText').addEventListener('input', () => {
-  // Re-render whichever view is currently active. previewOrders re-renders the live table;
-  // renderResult re-renders the post-Build merged-list table.
-  if (RESULT.length) renderResult();
-  if (ORDERS.length) previewOrders();
+  clearTimeout(_filterDebounceTimer);
+  _filterDebounceTimer = setTimeout(() => {
+    // Re-render whichever view is currently active. refreshOrdersView reuses
+    // the already-built per-row dataset (see FLAT_ROWS_CACHE) since typing in
+    // this box never changes the underlying order/bin/mapping data.
+    if (RESULT.length) renderResult();
+    if (ORDERS.length) refreshOrdersView();
+  }, 180);
 });
 $('clearFilterBtn').addEventListener('click', () => {
   $('filterText').value = '';
   if (RESULT.length) renderResult();
-  if (ORDERS.length) previewOrders();
+  if (ORDERS.length) refreshOrdersView();
 });
 
 // Insufficient-stock-only toggle re-renders the preview
-$('insufficientOnly').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
-$('hideCancelled').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
-$('hideShipped').addEventListener('change', () => { if (ORDERS.length) previewOrders(); });
+$('insufficientOnly').addEventListener('change', () => { if (ORDERS.length) refreshOrdersView(); });
+$('hideCancelled').addEventListener('change', () => { if (ORDERS.length) refreshOrdersView(); });
+$('hideShipped').addEventListener('change', () => { if (ORDERS.length) refreshOrdersView(); });
 
 // Filter input: pressing Enter (typical end-of-scan signal from a barcode
 // scanner) selects all the text so the next scan replaces it cleanly, and
@@ -3538,7 +3602,7 @@ document.getElementById('resultHead').addEventListener('click', (e) => {
   const col = th.dataset.col;
   if (SORT_COL === col){ SORT_DIR = SORT_DIR === 'asc' ? 'desc' : 'asc'; }
   else { SORT_COL = col; SORT_DIR = 'asc'; }
-  if (ORDERS.length) previewOrders();
+  if (ORDERS.length) refreshOrdersView();
 });
 
 // Column resizing — drag the handle on a header's right edge. Widths persist
