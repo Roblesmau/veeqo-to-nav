@@ -2835,7 +2835,7 @@ $('mapSheet').addEventListener('change', () => {
     cols = json.length ? Object.keys(json[0]) : [];
   }
   for (const id of ['colItem','colUpc','colSku']){
-    const sel = $(id); sel.innerHTML = cols.map(c=>`<option>${c}</option>`).join('');
+    const sel = $(id); sel.innerHTML = cols.map(c=>`<option value="${esc(c)}">${esc(c)}</option>`).join('');
   }
   // Heuristic guesses by header text
   guess('colItem', cols, /item|ecom|^B$/i);
@@ -3134,7 +3134,7 @@ $('binSheet').addEventListener('change', () => {
     cols = json.length ? Object.keys(json[0]) : [];
   }
   for (const id of ['binColSku','binColLoc','binColQty','binColCode','binColZone']){
-    const sel = $(id); sel.innerHTML = '<option value="">(none)</option>' + cols.map(c => `<option>${c}</option>`).join('');
+    const sel = $(id); sel.innerHTML = '<option value="">(none)</option>' + cols.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
   }
   // Heuristic guesses
   const guessSku = cols.find(c => /item\s*no|item_?no|sku|item/i.test(c));
@@ -3180,7 +3180,7 @@ function populateBinZones(){
   for (const d of DEFAULT_ZONES) if (!sorted.includes(d)) sorted.push(d);
   sorted.sort();
   const sel = $('binZones');
-  sel.innerHTML = sorted.map(z => `<option value="${z}"${saved.includes(z)?' selected':''}>${z}</option>`).join('');
+  sel.innerHTML = sorted.map(z => `<option value="${esc(z)}"${saved.includes(z)?' selected':''}>${esc(z)}</option>`).join('');
   // Show all zone codes at once (no scrolling) — capped at a reasonable max so the panel doesn't become huge
   sel.size = Math.min(Math.max(sorted.length, 4), 20);
   $('binZonesCount').textContent = `(${sorted.length} found)`;
