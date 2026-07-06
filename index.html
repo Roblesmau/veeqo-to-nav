@@ -1442,11 +1442,24 @@ document.getElementById('historyBody')?.addEventListener('click', async (e) => {
       });
       e.target.textContent = 'Save';
     } else {
+      // Validate qty before saving — an empty or non-numeric qty would silently
+      // become 0 and corrupt the audit trail. Keep the row in edit mode so the
+      // typed values aren't lost, and tell the user what's wrong.
+      const qtyInput = tr.querySelector('td[data-field="qty"] input');
+      if (qtyInput){
+        const raw = qtyInput.value.trim();
+        if (raw === '' || !Number.isFinite(Number(raw)) || Number(raw) < 0){
+          alert('Qty must be a number of 0 or more. Fix it and click Save again.');
+          tr.classList.add('editing'); // undo the toggle so state stays consistent
+          qtyInput.focus();
+          return;
+        }
+      }
       const payload = {};
       cells.forEach(td => {
         const input = td.querySelector('input');
         const field = td.dataset.field;
-        payload[field] = field === 'qty' ? (Number(input.value) || 0) : input.value;
+        payload[field] = field === 'qty' ? Number(input.value) : input.value;
       });
       try {
         const { error } = await sb.from('nav_so_export_history').update(payload).eq('id', id);
@@ -1625,9 +1638,16 @@ function surfaceError(label, e){
   }
 }
 
+// Buttons that must be locked while a fetch is in flight — exporting against a
+// half-populated ORDERS (or empty CANCELLED/SHIPPED sets) would produce a
+// wrong/partial file and silently log bad History rows.
+const FETCH_LOCK_BTNS = ['fetchBtn','exportNavBtn','exportNavSOBtn','exportOrderByLocBtn'];
+function setFetchLock(locked){
+  FETCH_LOCK_BTNS.forEach(id => { const b = $(id); if (b) b.disabled = locked; });
+}
 $('fetchBtn').addEventListener('click', async () => {
   if (!$('apiKey').value){ alert('Enter API key first.'); return; }
-  $('fetchBtn').disabled = true;
+  setFetchLock(true);
   ORDERS = [];
   // If the user is on Supabase bin/stock source, refresh it in parallel with
   // the order fetch so the merged view reflects the latest inventory_available
@@ -1743,7 +1763,7 @@ $('fetchBtn').addEventListener('click', async () => {
   } catch (e){
     surfaceError('Fetch failed', e);
   } finally {
-    $('fetchBtn').disabled = false;
+    setFetchLock(false);
   }
 });
 
@@ -3733,7 +3753,7 @@ $('copySelectedBtn').addEventListener('click', () => {
 // Clear every Exported flag (team-shared).
 $('clearExportedBtn').addEventListener('click', () => clearExportedOrders());
 
-function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
 // Render a "Buy label" link button for an order. Veeqo accepts a
 // ?number=<orderNumber> query parameter on the orders list that
