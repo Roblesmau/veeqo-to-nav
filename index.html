@@ -795,11 +795,13 @@ function resolveMapping(storeId, ecom, rawSku){
   const tryEcom = () => MAPPING[eKey] || MAPPING[sKey] || null;
   const trySku  = () => MAPPING_BY_SKU[sKey] || MAPPING_BY_SKU[eKey] || null;
   const tryUpc  = () => MAPPING_BY_UPC[sKey] || MAPPING_BY_UPC[eKey] || null;
-  let m = type === 'sku' ? trySku() : type === 'upc' ? tryUpc() : tryEcom();
+  const tryD3   = () => MAPPING_BY_D3[sKey]  || MAPPING_BY_D3[eKey]  || null;
+  let m = type === 'sku' ? trySku() : type === 'upc' ? tryUpc() : type === 'd3' ? tryD3() : tryEcom();
   if (m) return m;
   if (type !== 'sku')  { m = trySku();  if (m) return m; }
   if (type !== 'ecom') { m = tryEcom(); if (m) return m; }
   if (type !== 'upc')  { m = tryUpc();  if (m) return m; }
+  if (type !== 'd3')   { m = tryD3();   if (m) return m; }
   return null;
 }
 
@@ -823,7 +825,7 @@ function renderStoreIdMap(){
     lbl.title = name;
     const sel = document.createElement('select');
     sel.style.cssText = 'width:auto;padding:2px 6px;font-size:11px;flex:0 0 auto';
-    [['ecom','Ecom number'],['sku','SKU (Local)'],['upc','UPC']].forEach(([v,label]) => {
+    [['ecom','Ecom number'],['sku','SKU (Local)'],['upc','UPC'],['d3','Description 3']].forEach(([v,label]) => {
       const o = document.createElement('option');
       o.value = v; o.textContent = label;
       if (v === current) o.selected = true;
@@ -1003,6 +1005,7 @@ let ORDERS = [];        // raw orders from Veeqo
 let MAPPING = {};         // cleanedEcom    -> { upc, sku, ecom, raw } — Items file row, indexed by Ecom SKU (default lookup)
 let MAPPING_BY_SKU = {};  // cleanedLocalSku -> same row — for stores configured to match against Local SKU (e.g. Walmart)
 let MAPPING_BY_UPC = {};  // cleanedUpc     -> same row — for stores configured to match against UPC
+let MAPPING_BY_D3  = {};  // cleanedDescription3 -> same row — for stores whose line items carry the Nav description_3 code (e.g. Vintage-FBM's VSC numbers). Only populated by the mau_main_items source; the slim Excel/CSV file has no description_3 column.
 let MAP_WB = null;      // workbook
 let RESULT = [];        // merged rows for export
 let BIN_WB = null;      // bin/stock workbook
@@ -2604,7 +2607,7 @@ $('clearMapBtn').addEventListener('click', async () => {
   // later (per-store identifier mapping) and this handler hadn't been
   // updated, so stale data could linger after a "Clear saved" if any store
   // was set to SKU/UPC lookup.
-  MAP_WB = null; MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  MAP_WB = null; MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {};
   $('mapSheet').innerHTML = '';
   for (const id of ['colItem','colUpc','colSku']) $(id).innerHTML = '';
   $('mapFile').value = '';
@@ -2923,14 +2926,14 @@ $('mapSheet').addEventListener('change', () => {
 function guess(selId, cols, rx){ const m = cols.find(c=>rx.test(c)); if (m) $(selId).value = m; }
 
 function rebuildMapping(){
-  if (!MAP_WB) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; return; }
+  if (!MAP_WB) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {}; return; }
   const ws = MAP_WB.Sheets[$('mapSheet').value];
-  if (!ws) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; return; }
+  if (!ws) { MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {}; return; }
   const rows = XLSX.utils.sheet_to_json(ws, { header: looksLikeLetterHeader() ? 'A' : undefined, defval: '' });
   const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
   // Three indexes off the same row so resolveMapping() can switch per store
   // without re-walking the workbook. Keep them in lockstep here.
-  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {};
   for (const r of rows){
     const ecomRaw = r[cI];
     const skuRaw  = String(r[cS]||'').trim();
@@ -2968,21 +2971,24 @@ function setItemsMauPills(){
 }
 
 function rebuildMappingFromMauRows(rows){
-  // rows: [{ item_no, no_2, upc, ... }]
-  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  // rows: [{ item_no, no_2, upc, description_3, ... }]
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {}; MAPPING_BY_D3 = {};
   for (const r of rows){
     const ecomRaw = r.no_2 ?? '';
     const skuRaw  = String(r.item_no ?? '').trim();
     const upcRaw  = String(r.upc ?? '').trim();
+    const d3Raw   = String(r.description_3 ?? '').trim();
     const ecomStr = String(ecomRaw).trim();
     const keyE = cleanItem(ecomStr);
     const keyS = cleanItem(skuRaw);
     const keyU = cleanItem(upcRaw);
-    if (!keyE && !keyS && !keyU) continue;
+    const keyD = cleanItem(d3Raw);
+    if (!keyE && !keyS && !keyU && !keyD) continue;
     const row = { upc: upcRaw, sku: skuRaw, ecom: ecomStr, raw: ecomRaw };
     if (keyE) MAPPING[keyE] = row;
     if (keyS) MAPPING_BY_SKU[keyS] = row;
     if (keyU) MAPPING_BY_UPC[keyU] = row;
+    if (keyD) MAPPING_BY_D3[keyD] = row;
   }
   ITEMS_MAU_COUNT = rows.length;
   setItemsMauPills();
@@ -3013,7 +3019,9 @@ async function loadItemsFromMauMainItems({ force = false, silent = false } = {})
     const watermark = await getMauWatermark();
     if (!force){
       const cached = await idbLoad('mapping_mau');
-      if (cached && cached.watermark && watermark && cached.watermark === watermark && Array.isArray(cached.rows)){
+      // ver 2 = rows include description_3. Older caches (no ver / ver 1)
+      // lack the column, so treat them as stale even if the watermark matches.
+      if (cached && cached.ver === 2 && cached.watermark && watermark && cached.watermark === watermark && Array.isArray(cached.rows)){
         ITEMS_MAU_WATERMARK = cached.watermark;
         rebuildMappingFromMauRows(cached.rows);
         setPill(`✓ Cache fresh (${cached.rows.length.toLocaleString()})`, 'share-ok');
@@ -3030,7 +3038,7 @@ async function loadItemsFromMauMainItems({ force = false, silent = false } = {})
       if (pill) pill.textContent = `Pulling… ${rows.length.toLocaleString()}`;
       const { data, error } = await sb
         .from('mau_main_items')
-        .select('item_no,no_2,upc')
+        .select('item_no,no_2,upc,description_3')
         .order('item_no', { ascending: true })
         .range(from, from + CHUNK - 1);
       if (error) throw error;
@@ -3044,7 +3052,7 @@ async function loadItemsFromMauMainItems({ force = false, silent = false } = {})
     rebuildMappingFromMauRows(rows);
     // Cache slim rows (3 cols only) so the next boot can skip the pull.
     try {
-      await idbSave('mapping_mau', { rows, watermark: ITEMS_MAU_WATERMARK, cachedAt: new Date().toISOString() });
+      await idbSave('mapping_mau', { rows, watermark: ITEMS_MAU_WATERMARK, cachedAt: new Date().toISOString(), ver: 2 });
     } catch (e){
       log('Could not cache items: ' + e.message, 'badge-warn');
     }
@@ -3077,7 +3085,7 @@ async function setItemsSource(src){
   try { localStorage.setItem(ITEMS_SOURCE_KEY, src); } catch {}
   applyItemsSourceUI();
   // Clear indexes so a half-loaded other-source view doesn't bleed across.
-  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {};
   if (src === 'mau'){
     await loadItemsFromMauMainItems({ silent: false });
   } else {
@@ -3586,7 +3594,7 @@ $('buildBtn').addEventListener('click', () => {
   const ws = MAP_WB.Sheets[$('mapSheet').value];
   const rows = XLSX.utils.sheet_to_json(ws, { defval:'' });
   const cI = $('colItem').value, cU = $('colUpc').value, cS = $('colSku').value;
-  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {};
+  MAPPING = {}; MAPPING_BY_SKU = {}; MAPPING_BY_UPC = {}; MAPPING_BY_D3 = {};
   for (const r of rows){
     const ecomRaw = r[cI];
     const skuRaw  = String(r[cS]||'').trim();
