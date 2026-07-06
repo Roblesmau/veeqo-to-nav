@@ -1544,18 +1544,32 @@ $('userNameBtn').addEventListener('click', () => {
 // =========================================================
 // Veeqo fetch
 // =========================================================
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
 async function veeqoGet(path, params){
   const base = $('baseUrl').value.replace(/\/$/,'');
   // Support both absolute base URLs (e.g. http://localhost:8787) and
   // same-origin paths (e.g. /api). The 2nd arg is ignored for absolute URLs.
   const url = new URL(base + path, window.location.origin);
   if (params) for (const [k,v] of Object.entries(params)) if (v!==''&&v!=null) url.searchParams.set(k, v);
-  const res = await fetch(url, { headers: { 'x-api-key': $('apiKey').value, 'Accept': 'application/json' } });
-  if (!res.ok){
+  // Veeqo rate-limits by API key (HTTP 429). Fetching many (status × channel)
+  // pairs concurrently can burst past that, so on a 429/503 we back off and
+  // retry instead of failing the whole fetch. Honor the Retry-After header
+  // when Veeqo sends it; otherwise use exponential backoff (1s, 2s, 4s, 8s).
+  const MAX_RETRIES = 5;
+  for (let attempt = 0; ; attempt++){
+    const res = await fetch(url, { headers: { 'x-api-key': $('apiKey').value, 'Accept': 'application/json' } });
+    if (res.ok) return res.json();
+    if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES){
+      const retryAfter = parseFloat(res.headers.get('Retry-After'));
+      const waitMs = Number.isFinite(retryAfter) ? retryAfter * 1000 : Math.min(1000 * 2**attempt, 8000);
+      log(`Rate-limited (HTTP ${res.status}) — waiting ${Math.round(waitMs/1000)}s then retrying (${attempt+1}/${MAX_RETRIES})…`, 'badge-warn');
+      await sleep(waitMs);
+      continue;
+    }
     const txt = await res.text().catch(()=> '');
     throw new Error(`HTTP ${res.status} ${res.statusText} — ${txt.slice(0,200)}`);
   }
-  return res.json();
 }
 
 async function loadStores({ silent = false } = {}){
@@ -1688,7 +1702,7 @@ $('fetchBtn').addEventListener('click', async () => {
     // times as long as a single-status fetch.
     const pairs = [];
     for (const st of statuses) for (const ch of channels) pairs.push([st, ch]);
-    const FETCH_CONCURRENCY = 4;
+    const FETCH_CONCURRENCY = 2;
     log(`Fetching orders… (${channels.length} channel${channels.length===1?'':'s'} × ${statuses.length} status${statuses.length===1?'':'es'} = ${pairs.length} fetch${pairs.length===1?'':'es'}, up to ${FETCH_CONCURRENCY} at a time)`);
 
     const tasks = pairs.map(([st, ch]) => async () => {
