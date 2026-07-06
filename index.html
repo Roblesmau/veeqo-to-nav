@@ -141,9 +141,23 @@
   summary{cursor:pointer;color:var(--muted)}
   code{background:var(--panel2);padding:1px 5px;border-radius:4px}
   .hint{font-size:12px;color:var(--muted);margin-top:6px}
+  /* Full-screen loading overlay — freezes the UI during Fetch Orders so the
+     user never sees partial counts while ORDERS is still filling. */
+  #loadingOverlay{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;flex-direction:column;gap:14px;background:rgba(10,14,22,.72);backdrop-filter:blur(2px)}
+  #loadingOverlay.show{display:flex}
+  html[data-theme="light"] #loadingOverlay{background:rgba(245,247,250,.78)}
+  .loading-spinner{width:44px;height:44px;border:4px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:lo-spin .8s linear infinite}
+  @keyframes lo-spin{to{transform:rotate(360deg)}}
+  .loading-msg{color:var(--text);font-size:15px;font-weight:600;letter-spacing:.3px}
+  .loading-sub{color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
+<div id="loadingOverlay" role="alert" aria-busy="true">
+  <div class="loading-spinner"></div>
+  <div class="loading-msg">Please wait while loading…</div>
+  <div class="loading-sub" id="loadingSub">Fetching orders from Veeqo</div>
+</div>
 <header>
   <h1>Veeqo → Nav</h1>
   <span class="sub">Fetch orders · merge with UPC / local SKU mapping · export</span>
@@ -1659,9 +1673,19 @@ const FETCH_LOCK_BTNS = ['fetchBtn','exportNavBtn','exportNavSOBtn','exportOrder
 function setFetchLock(locked){
   FETCH_LOCK_BTNS.forEach(id => { const b = $(id); if (b) b.disabled = locked; });
 }
+// Full-screen "Please wait" overlay shown for the whole fetch. Freezes all
+// interaction and hides the partial counts that render mid-fetch (the parallel
+// bin refresh calls previewOrders() while ORDERS is still filling).
+function setLoadingOverlay(on, sub){
+  const el = $('loadingOverlay');
+  if (!el) return;
+  if (sub != null && $('loadingSub')) $('loadingSub').textContent = sub;
+  el.classList.toggle('show', !!on);
+}
 $('fetchBtn').addEventListener('click', async () => {
   if (!$('apiKey').value){ alert('Enter API key first.'); return; }
   setFetchLock(true);
+  setLoadingOverlay(true, 'Fetching orders from Veeqo');
   ORDERS = [];
   // If the user is on Supabase bin/stock source, refresh it in parallel with
   // the order fetch so the merged view reflects the latest inventory_available
@@ -1720,6 +1744,7 @@ $('fetchBtn').addEventListener('click', async () => {
         if (ch) for (const o of arr) o.__storeId = String(ch);
         ORDERS.push(...arr);
         log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
+        setLoadingOverlay(true, `Fetching orders from Veeqo — ${ORDERS.length} so far`);
         if (arr.length < (params.page_size|0)) break;
       }
     });
@@ -1777,6 +1802,7 @@ $('fetchBtn').addEventListener('click', async () => {
   } catch (e){
     surfaceError('Fetch failed', e);
   } finally {
+    setLoadingOverlay(false);
     setFetchLock(false);
   }
 });
