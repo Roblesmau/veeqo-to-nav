@@ -2123,6 +2123,10 @@ const SELECTED_ORDERS = new Set();
 // which always rebuilds — this cache is purely an optimization, never a
 // source of staleness, because only previewOrders() itself writes it.
 let FLAT_ROWS_CACHE = null;
+// Last-rendered visible row set + sort state — lets renderOrdersFromFlat()
+// skip its innerHTML rebuild when nothing visible actually changed.
+let _lastRenderedRows = null;
+let _lastRenderSig = '';
 
 function buildFlatOrderRows(){
   // Sort by created_at ascending first so cumulative demand is computed in
@@ -2183,8 +2187,12 @@ function buildFlatOrderRows(){
         cumDemand[demandKey] = usedBefore + qty;
         insufficient = (usedBefore + qty) > totalAvail;
       }
+      // Precomputed lowercase search haystack (incl. zero-stripped UPC) so the
+      // text filter doesn't rebuild+lowercase 7 fields per row on every keystroke.
+      const upcStr = String(lookupUpc || '');
+      const hay = [orderNumber, cust, ecom, lookupSku, rawSku, upcStr, upcStr.replace(/^0+(?=\d)/, '')].join(' ').toLowerCase();
       flat.push({
-        orderNumber,
+        orderNumber, hay,
         cust, shipFrom, del,
         itemCell, ecom, rawSku, lookupSku, lookupUpc,
         qty, priceNum, discNum, codeVals, totalAvail,
@@ -2212,8 +2220,8 @@ function renderOrdersFromFlat(flat){
   let filtered = flat;
   if (filter){
     filtered = filtered.filter(r => {
-      const upc = String(r.lookupUpc || '');
-      const hay = [r.orderNumber, r.cust, r.ecom, r.lookupSku, r.rawSku, upc, stripZeros(upc)].join(' ').toLowerCase();
+      // r.hay is precomputed in buildFlatOrderRows(); fall back for safety.
+      const hay = r.hay || [r.orderNumber, r.cust, r.ecom, r.lookupSku, r.rawSku, r.lookupUpc, stripZeros(r.lookupUpc)].join(' ').toLowerCase();
       if (hay.includes(filter)) return true;
       if (filterNoZ && filterNoZ !== filter && hay.includes(filterNoZ)) return true;
       return false;
@@ -2257,6 +2265,21 @@ function renderOrdersFromFlat(flat){
       return 0;
     });
   }
+
+  // 4b. Skip the expensive innerHTML rebuild (up to 1000 rows × 20+ cells) if
+  // the visible row set is identical to the last render. Common while typing:
+  // extra chars that don't change the match set, or backspacing. Row objects
+  // are compared by identity — previewOrders() creates fresh objects, so any
+  // real data change always re-renders. Sort state is included in the check
+  // so flipping direction on all-equal values still updates the header arrow.
+  const renderSig = `${SORT_COL||''}|${SORT_DIR||''}`;
+  if (_lastRenderSig === renderSig && _lastRenderedRows &&
+      _lastRenderedRows.length === filtered.length &&
+      _lastRenderedRows.every((r, i) => r === filtered[i])){
+    return;
+  }
+  _lastRenderSig = renderSig;
+  _lastRenderedRows = filtered.slice(); // copy — `filtered` may alias the cache
 
   // 5. Render header (with select-all + sort indicators)
   const arrow = (col) => SORT_COL === col ? `<span class="sort-arrow">${SORT_DIR === 'asc' ? '▲' : '▼'}</span>` : '';
@@ -3634,17 +3657,20 @@ let _filterDebounceTimer = null;
 $('filterText').addEventListener('input', () => {
   clearTimeout(_filterDebounceTimer);
   _filterDebounceTimer = setTimeout(() => {
-    // Re-render whichever view is currently active. refreshOrdersView reuses
-    // the already-built per-row dataset (see FLAT_ROWS_CACHE) since typing in
-    // this box never changes the underlying order/bin/mapping data.
-    if (RESULT.length) renderResult();
+    // Re-render the active view. Both renders write the same #resultHead/
+    // #resultBody table and the orders view wins when ORDERS exist, so only
+    // render the one that would end up visible — rendering both did a full
+    // merged-table build that was immediately overwritten. refreshOrdersView
+    // reuses the already-built per-row dataset (see FLAT_ROWS_CACHE) since
+    // typing in this box never changes the underlying order/bin/mapping data.
     if (ORDERS.length) refreshOrdersView();
+    else if (RESULT.length) renderResult();
   }, 180);
 });
 $('clearFilterBtn').addEventListener('click', () => {
   $('filterText').value = '';
-  if (RESULT.length) renderResult();
   if (ORDERS.length) refreshOrdersView();
+  else if (RESULT.length) renderResult();
 });
 
 // Insufficient-stock-only toggle re-renders the preview
