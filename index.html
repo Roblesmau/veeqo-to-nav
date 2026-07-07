@@ -2238,7 +2238,7 @@ function buildFlatOrderRows(){
 }
 
 function renderOrdersFromFlat(flat){
-  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','Desc 3','SKU','UPC','Qty', ...LOCATION_CODES];
+  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','Vintage','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 2. Apply text filter
   // Scanners sometimes prepend leading zeros to UPCs (e.g. "09856" on the
@@ -2396,7 +2396,7 @@ function sortValueForCol(r, col){
     case 'Price':     return r.priceNum;
     case 'Discount':  return r.discNum;
     case 'Ecom Item': return String(r.ecom).toLowerCase();
-    case 'Desc 3':    return String(r.lookupD3 || '').toLowerCase();
+    case 'Vintage':   return String(r.lookupD3 || '').toLowerCase();
     case 'SKU':       return String(r.lookupSku).toLowerCase();
     case 'UPC':       return String(r.lookupUpc).toLowerCase();
     case 'Qty':       return r.qty;
