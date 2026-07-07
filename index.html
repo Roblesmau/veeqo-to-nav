@@ -567,9 +567,10 @@ function activateTab(name){
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
   try { localStorage.setItem('veeqo_to_nav_tab', name); } catch {}
   if (name === 'orders'){
-    // Auto-fetch on entering the Orders tab
+    // Auto-fetch on entering the Orders tab — silent/background so the user
+    // can keep working; the table swaps in one step when the fetch completes.
     if ($('apiKey') && $('apiKey').value && $('fetchBtn') && !$('fetchBtn').disabled){
-      $('fetchBtn').click();
+      fetchOrders({ background: true });
     }
     startAutoRefresh();
   } else {
@@ -581,7 +582,7 @@ function startAutoRefresh(){
   stopAutoRefresh();
   if ($('autoRefresh') && !$('autoRefresh').checked) return;
   autoFetchTimer = setInterval(() => {
-    if ($('apiKey').value && !$('fetchBtn').disabled) $('fetchBtn').click();
+    if ($('apiKey').value && !$('fetchBtn').disabled) fetchOrders({ background: true });
   }, 5 * 60 * 1000);
 }
 function stopAutoRefresh(){
@@ -1685,11 +1686,23 @@ function setLoadingOverlay(on, sub){
   if (sub != null && $('loadingSub')) $('loadingSub').textContent = sub;
   el.classList.toggle('show', !!on);
 }
-$('fetchBtn').addEventListener('click', async () => {
-  if (!$('apiKey').value){ alert('Enter API key first.'); return; }
-  setFetchLock(true);
-  setLoadingOverlay(true, 'Fetching orders from Veeqo');
-  ORDERS = [];
+// Manual fetch (button click) freezes the UI under the loading overlay and
+// locks the export buttons. Background fetch (5-min auto-refresh, entering the
+// Orders tab) is silent and seamless: it collects into a local buffer and only
+// swaps ORDERS in one synchronous step at the end, so the visible table — and
+// any export clicked mid-refresh — always works off a complete, consistent
+// snapshot (the previous one until the swap). Only the Fetch button itself is
+// disabled during a background run, to prevent overlapping fetches.
+async function fetchOrders({ background = false } = {}){
+  if (!$('apiKey').value){ if (!background) alert('Enter API key first.'); return; }
+  if ($('fetchBtn').disabled) return; // a fetch is already in flight
+  if (background){
+    $('fetchBtn').disabled = true;
+  } else {
+    setFetchLock(true);
+    setLoadingOverlay(true, 'Fetching orders from Veeqo');
+  }
+  const fetched = [];
   // If the user is on Supabase bin/stock source, refresh it in parallel with
   // the order fetch so the merged view reflects the latest inventory_available
   // every time orders refresh (manual click or auto-refresh).
@@ -1745,13 +1758,17 @@ $('fetchBtn').addEventListener('click', async () => {
         // can route per-store regardless of how Veeqo populates o.channel.*
         // (For "all stores" mode ch is null and we fall back to o.channel?.id.)
         if (ch) for (const o of arr) o.__storeId = String(ch);
-        ORDERS.push(...arr);
-        log(`${label} p${page}: +${arr.length} (total ${ORDERS.length})`);
-        setLoadingOverlay(true, `Fetching orders from Veeqo — ${ORDERS.length} so far`);
+        fetched.push(...arr);
+        log(`${label} p${page}: +${arr.length} (total ${fetched.length})`);
+        if (!background) setLoadingOverlay(true, `Fetching orders from Veeqo — ${fetched.length} so far`);
         if (arr.length < (params.page_size|0)) break;
       }
     });
     await runWithConcurrency(tasks, FETCH_CONCURRENCY);
+    // Atomic swap: ORDERS keeps showing the previous complete dataset for the
+    // whole fetch above; everything from here to the final previewOrders()
+    // operates on the new one.
+    ORDERS = fetched;
     // Build shipped / cancelled exclusion sets from ALL fetched records BEFORE
     // dedupe, so a shipped/cancelled twin can hide its awaiting sibling even if
     // dedupe keeps the awaiting record.
@@ -1803,12 +1820,22 @@ $('fetchBtn').addEventListener('click', async () => {
     // #18 — fire webhook for newly-detected insufficient orders
     checkAndFireInsufficientWebhook();
   } catch (e){
-    surfaceError('Fetch failed', e);
+    if (background){
+      // Never pop an alert from a background refresh — the old data stays up.
+      log(`Background refresh failed: ${e.message}`, 'badge-warn');
+    } else {
+      surfaceError('Fetch failed', e);
+    }
   } finally {
-    setLoadingOverlay(false);
-    setFetchLock(false);
+    if (background){
+      $('fetchBtn').disabled = false;
+    } else {
+      setLoadingOverlay(false);
+      setFetchLock(false);
+    }
   }
-});
+}
+$('fetchBtn').addEventListener('click', () => fetchOrders());
 
 // ============================================================
 // Export Items MD — paginated dump of public.mau_main_items → .xlsx
