@@ -2183,6 +2183,7 @@ function buildFlatOrderRows(){
       const m = resolveMapping(getOrderStoreId(o), rawEcom, rawSku);
       const lookupSku = m ? m.sku : '';
       const lookupUpc = m ? m.upc : '';
+      const lookupD3  = m ? (m.d3 || '') : '';
       // When a row matched, show the canonical Ecom number from the
       // items file (so a Walmart line that came in as a bare SKU still
       // shows the real EC00xxxxx in the Ecom Item column). If no match,
@@ -2219,11 +2220,11 @@ function buildFlatOrderRows(){
       // Precomputed lowercase search haystack (incl. zero-stripped UPC) so the
       // text filter doesn't rebuild+lowercase 7 fields per row on every keystroke.
       const upcStr = String(lookupUpc || '');
-      const hay = [orderNumber, cust, ecom, lookupSku, rawSku, upcStr, upcStr.replace(/^0+(?=\d)/, '')].join(' ').toLowerCase();
+      const hay = [orderNumber, cust, ecom, lookupSku, rawSku, lookupD3, upcStr, upcStr.replace(/^0+(?=\d)/, '')].join(' ').toLowerCase();
       flat.push({
         orderNumber, hay,
         cust, shipFrom, del,
-        itemCell, ecom, rawSku, lookupSku, lookupUpc,
+        itemCell, ecom, rawSku, lookupSku, lookupUpc, lookupD3,
         qty, priceNum, discNum, codeVals, totalAvail,
         status: o.status || '',
         created: o.created_at || '',
@@ -2237,7 +2238,7 @@ function buildFlatOrderRows(){
 }
 
 function renderOrdersFromFlat(flat){
-  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','SKU','UPC','Qty', ...LOCATION_CODES];
+  const cols = ['Order','Date','Status','Exported','Customer','Ship from','Delivery','Item','Price','Discount','Ecom Item','Desc 3','SKU','UPC','Qty', ...LOCATION_CODES];
 
   // 2. Apply text filter
   // Scanners sometimes prepend leading zeros to UPCs (e.g. "09856" on the
@@ -2352,6 +2353,7 @@ function renderOrdersFromFlat(flat){
       <td class="col-price">${r.priceNum ? '$'+r.priceNum.toFixed(2) : ''}</td>
       <td class="col-discount">${r.discNum ? `<span class="discount-pill">−$${r.discNum.toFixed(2)}</span>` : ''}</td>
       <td>${esc(r.ecom)}</td>
+      <td>${esc(r.lookupD3)}</td>
       <td${!r.lookupSku?' class="badge-warn"':''}>${esc(r.lookupSku)}</td>
       <td${!r.lookupUpc?' class="badge-warn"':''}>${esc(r.lookupUpc)}</td>
       <td class="col-qty">${r.qty}</td>
@@ -2394,6 +2396,7 @@ function sortValueForCol(r, col){
     case 'Price':     return r.priceNum;
     case 'Discount':  return r.discNum;
     case 'Ecom Item': return String(r.ecom).toLowerCase();
+    case 'Desc 3':    return String(r.lookupD3 || '').toLowerCase();
     case 'SKU':       return String(r.lookupSku).toLowerCase();
     case 'UPC':       return String(r.lookupUpc).toLowerCase();
     case 'Qty':       return r.qty;
@@ -2984,7 +2987,7 @@ function rebuildMappingFromMauRows(rows){
     const keyU = cleanItem(upcRaw);
     const keyD = cleanItem(d3Raw);
     if (!keyE && !keyS && !keyU && !keyD) continue;
-    const row = { upc: upcRaw, sku: skuRaw, ecom: ecomStr, raw: ecomRaw };
+    const row = { upc: upcRaw, sku: skuRaw, ecom: ecomStr, raw: ecomRaw, d3: d3Raw };
     if (keyE) MAPPING[keyE] = row;
     if (keyS) MAPPING_BY_SKU[keyS] = row;
     if (keyU) MAPPING_BY_UPC[keyU] = row;
