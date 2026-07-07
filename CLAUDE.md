@@ -56,6 +56,12 @@ Same domain → no CORS, no second platform.
 - Zone Code column is the source of truth for zone filtering; Bin Code is a fallback heuristic.
 - **Scanner-tolerant UPC search.** Filter inputs strip leading zeros on both the needle and the haystack so a scanned `09856` matches a DB value of `9856` (regex: `/^0+(?=\d)/`). Apply in both the orders preview and the merged-results filter.
 
+### Security (stored XSS)
+
+- `esc()` escapes `& < > " '` — the quotes matter because it's used **inside HTML attributes** (`value="${esc(x)}"`), not just text. Don't "simplify" it back to just `& < >`.
+- **Every** interpolation into `innerHTML` must run through `esc()`, including `<option>` value *and* text. Team-shared data is untrusted: History rows (customer/SKU), uploaded Items/Bin **column headers**, and **zone codes** all round-trip through Supabase to other teammates' browsers. A stored payload could read the Veeqo API key from their `localStorage`.
+- Prefer `createElement` + `textContent` (DOM-safe, like the sheet-name pickers) for new dropdowns rather than `innerHTML` string-building.
+
 ### Veeqo integration
 
 - "Buy label" button uses `https://app.veeqo.com/orders?number=<order_number>` (filters Veeqo's orders list to that one order). Do **not** link to the order detail page — it doesn't expose the buy-label action.
@@ -79,6 +85,9 @@ Same domain → no CORS, no second platform.
 It's large (read-before-edit will sometimes need offset/limit). Prefer **`Edit` with tight unique context** over rewrites. If a change touches many spots, consider whether a small helper function would reduce duplication first.
 
 Things to re-check after touching the orders pipeline:
+- `previewOrders()` = expensive `buildFlatOrderRows()` (resolveMapping, bin lookup, cumulative demand) + cheap `renderOrdersFromFlat()`, cached in `FLAT_ROWS_CACHE`. Call `previewOrders()` from any site that changes real data; call `refreshOrdersView()` from pure display interactions (filter box, Hide/Insufficient toggles, sort click). Only `previewOrders()` writes the cache, so it's never stale.
+- Filter-text input is debounced (~180ms). Fetch runs (status × channel) pairs via `runWithConcurrency()` (cap 4); pagination *within* a pair stays sequential.
+- Fetch + all three export buttons lock together via `setFetchLock()` — exporting mid-fetch produces a partial file (fetch resets/refills `ORDERS` concurrently). Don't enable an export button independently.
 - Date defaults still produce a sensible rolling window.
 - Page size default is 100.
 - Insufficient-stock highlighting + filter toggle still work.
@@ -127,5 +136,6 @@ Things to re-check after touching the orders pipeline:
 - `proxy.js` — local dev proxy (Node, port 8787, honors `PORT`).
 - `vercel.json` — clean URLs + root redirect.
 - `SUPABASE_SETUP.md` — one-time DB + Storage + policies setup.
+- History tab logs every "Export to Nav SO" to Supabase `nav_so_export_history` (unique on `order_number, sku, location_code`). `buildNavSORows()` returns `historyRows`; `pushExportHistory()` runs post-export and skips orders already in `HISTORY_ORDER_NUMS`.
 - `DEPLOY.md` — Vercel deploy walkthrough for non-technical users.
 - `favicon.svg` — VN wordmark, blue→green gradient.
