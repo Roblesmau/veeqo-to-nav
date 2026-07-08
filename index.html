@@ -266,7 +266,7 @@
       </div>
       <label>Search query (optional)</label>
       <input id="query" placeholder="customer name, order #, etc."/>
-      <div class="hint" style="margin-top:8px">The <b>Fetch orders</b> button lives in the <b>Orders</b> tab. Orders auto-fetch on tab open and every 5 minutes.</div>
+      <div class="hint" style="margin-top:8px">The <b>Fetch orders</b> button lives in the <b>Orders</b> tab. Orders auto-fetch on tab open and every 10 minutes.</div>
     </fieldset>
 
     <fieldset>
@@ -447,7 +447,7 @@
         <span class="pill" id="lastBinFetched" title="Time of the last successful Supabase bin/stock refresh">Bin content: never</span>
       </span>
       <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px">
-        <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 5 min
+        <input id="autoRefresh" type="checkbox" checked style="width:auto"/> Auto-refresh every 10 min
       </label>
       <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px" title="When checked, clicking Export to Nav SO also generates the Order by Loc file (one row per order) for count & control.">
         <input id="exportCountControl" type="checkbox" checked style="width:auto"/> Export File for Count &amp; Control
@@ -585,7 +585,7 @@ function startAutoRefresh(){
   if ($('autoRefresh') && !$('autoRefresh').checked) return;
   autoFetchTimer = setInterval(() => {
     if ($('apiKey').value && !$('fetchBtn').disabled) fetchOrders({ background: true });
-  }, 5 * 60 * 1000);
+  }, 10 * 60 * 1000);
 }
 function stopAutoRefresh(){
   if (autoFetchTimer){ clearInterval(autoFetchTimer); autoFetchTimer = null; }
