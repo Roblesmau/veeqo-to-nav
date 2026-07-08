@@ -567,11 +567,13 @@ function activateTab(name){
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
   try { localStorage.setItem('veeqo_to_nav_tab', name); } catch {}
   if (name === 'orders'){
-    // No fetch here. Orders should only be pulled from Veeqo when the user
-    // explicitly presses Fetch orders, or via the opt-in 5-min auto-refresh
-    // timer below — not just from switching tabs, building the merged view,
-    // searching, or applying a filter (those all work off already-fetched
-    // ORDERS / RESULT and shouldn't trigger network calls).
+    // Auto-fetch on entering the Orders tab — silent/background so the user
+    // can keep working; the table swaps in one step when the fetch completes.
+    // Search / filter interactions on this tab (filterText, Hide toggles,
+    // sort) never call this — they only re-render already-fetched ORDERS.
+    if ($('apiKey') && $('apiKey').value && $('fetchBtn') && !$('fetchBtn').disabled){
+      fetchOrders({ background: true });
+    }
     startAutoRefresh();
   } else {
     stopAutoRefresh();
