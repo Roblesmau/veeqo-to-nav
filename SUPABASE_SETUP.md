@@ -64,6 +64,8 @@ create table if not exists nav_so_export_history (
   sku           text        not null,
   location_code text        not null,
   qty           numeric     not null default 0,
+  price         numeric,
+  discount      numeric,
   exported_at   timestamptz not null default now(),
   exported_by   text,
   unique (order_number, sku, location_code)

@@ -535,7 +535,7 @@
     <div class="hint" style="margin:6px 0">Every "Export to Nav SO" logs one row per Order + SKU + Location here. An order already logged here won't be logged again even if re-exported. Edit or delete any row, or add one manually.</div>
     <div id="historyTableWrap" style="border:1px solid var(--line);border-radius:8px;overflow:auto;max-height:calc(100vh - 220px)">
       <table id="historyTable"><thead><tr>
-        <th>Order</th><th>Order Date</th><th>Customer</th><th>SKU</th><th>Location</th><th>Qty</th><th>Exported At</th><th>Exported By</th><th>Actions</th>
+        <th>Order</th><th>Order Date</th><th>Customer</th><th>SKU</th><th>Location</th><th>Qty</th><th>Price</th><th>Discount</th><th>Exported At</th><th>Exported By</th><th>Actions</th>
       </tr></thead><tbody id="historyBody"></tbody></table>
     </div>
   </section>
@@ -1313,6 +1313,8 @@ async function pushExportHistory(historyRows){
       sku: r.sku,
       location_code: r.location,
       qty: Number(r.qty) || 0,
+      price: r.price != null ? Number(r.price) : null,
+      discount: r.discount != null ? Number(r.discount) : null,
       exported_by: who,
     }));
     const { error } = await sb.from('nav_so_export_history').upsert(payload, { onConflict: 'order_number,sku,location_code' });
@@ -1329,8 +1331,8 @@ async function pushExportHistory(historyRows){
 let HISTORY_ROWS = []; // last-loaded rows, cached for client-side filtering
 async function renderHistoryTab(){
   const body = $('historyBody'); if (!body) return;
-  if (!sb){ body.innerHTML = `<tr><td colspan="9">Supabase not configured. Set the URL + anon key in Setup → Panel 1B.</td></tr>`; return; }
-  body.innerHTML = `<tr><td colspan="9">Loading…</td></tr>`;
+  if (!sb){ body.innerHTML = `<tr><td colspan="11">Supabase not configured. Set the URL + anon key in Setup → Panel 1B.</td></tr>`; return; }
+  body.innerHTML = `<tr><td colspan="11">Loading…</td></tr>`;
   try {
     const all = [];
     const PAGE = 1000;
@@ -1351,7 +1353,7 @@ async function renderHistoryTab(){
     populateHistoryFilterOptions();
     renderHistoryRows();
   } catch (e){
-    body.innerHTML = `<tr><td colspan="9">Failed to load: ${esc(e.message)}</td></tr>`;
+    body.innerHTML = `<tr><td colspan="11">Failed to load: ${esc(e.message)}</td></tr>`;
   }
 }
 // Rebuild the Location / Exported-by dropdown options from whatever's
@@ -1399,7 +1401,7 @@ function renderHistoryRows(){
   const body = $('historyBody'); if (!body) return;
   const rows = getFilteredHistoryRows();
   if ($('historyCount')) $('historyCount').textContent = `${rows.length.toLocaleString()} rows`;
-  if (!rows.length){ body.innerHTML = `<tr><td colspan="9">No history rows.</td></tr>`; return; }
+  if (!rows.length){ body.innerHTML = `<tr><td colspan="11">No history rows.</td></tr>`; return; }
   body.innerHTML = rows.map(r => `<tr data-id="${r.id}">
     <td data-field="order_number">${esc(r.order_number)}</td>
     <td data-field="order_date">${esc(r.order_date ? new Date(r.order_date).toLocaleDateString() : '')}</td>
@@ -1407,6 +1409,8 @@ function renderHistoryRows(){
     <td data-field="sku">${esc(r.sku)}</td>
     <td data-field="location_code">${esc(r.location_code)}</td>
     <td data-field="qty">${esc(r.qty)}</td>
+    <td data-field="price">${r.price != null ? '$'+Number(r.price).toFixed(2) : ''}</td>
+    <td data-field="discount">${r.discount != null ? '$'+Number(r.discount).toFixed(2) : ''}</td>
     <td>${esc(r.exported_at ? new Date(r.exported_at).toLocaleString() : '')}</td>
     <td>${esc(r.exported_by || '')}</td>
     <td>
@@ -1457,8 +1461,10 @@ document.getElementById('historyBody')?.addEventListener('click', async (e) => {
         const field = td.dataset.field;
         const raw = HISTORY_ROWS.find(r => String(r.id) === String(id))?.[field] ?? '';
         const value = field === 'order_date' ? String(raw || '').slice(0,10) : raw;
-        const type = field === 'order_date' ? 'date' : (field === 'qty' ? 'number' : 'text');
-        td.innerHTML = `<input type="${type}" value="${esc(value)}" style="padding:3px 6px;font-size:12px" data-field="${field}"/>`;
+        const isNumeric = field === 'qty' || field === 'price' || field === 'discount';
+        const type = field === 'order_date' ? 'date' : (isNumeric ? 'number' : 'text');
+        const step = (field === 'price' || field === 'discount') ? ' step="0.01"' : '';
+        td.innerHTML = `<input type="${type}"${step} value="${esc(value)}" style="padding:3px 6px;font-size:12px" data-field="${field}"/>`;
       });
       e.target.textContent = 'Save';
     } else {
@@ -1475,11 +1481,27 @@ document.getElementById('historyBody')?.addEventListener('click', async (e) => {
           return;
         }
       }
+      // Price/Discount are optional (nullable) — unlike Qty, a blank field is
+      // valid and means "unknown", not zero. Only reject a non-blank value
+      // that isn't a real number.
+      for (const field of ['price', 'discount']){
+        const input = tr.querySelector(`td[data-field="${field}"] input`);
+        if (!input) continue;
+        const raw = input.value.trim();
+        if (raw !== '' && !Number.isFinite(Number(raw))){
+          alert(`${field === 'price' ? 'Price' : 'Discount'} must be a number, or left blank. Fix it and click Save again.`);
+          tr.classList.add('editing');
+          input.focus();
+          return;
+        }
+      }
       const payload = {};
       cells.forEach(td => {
         const input = td.querySelector('input');
         const field = td.dataset.field;
-        payload[field] = field === 'qty' ? Number(input.value) : input.value;
+        if (field === 'qty') payload[field] = Number(input.value);
+        else if (field === 'price' || field === 'discount') payload[field] = input.value.trim() === '' ? null : Number(input.value);
+        else payload[field] = input.value;
       });
       try {
         const { error } = await sb.from('nav_so_export_history').update(payload).eq('id', id);
@@ -1505,10 +1527,14 @@ $('historyAddBtn') && $('historyAddBtn').addEventListener('click', async () => {
   const qty = Number(prompt('Qty:', '1')) || 0;
   const customer = prompt('Customer (optional):') || '';
   const order_date = prompt('Order date (YYYY-MM-DD, optional):') || null;
+  const priceRaw = prompt('Price (optional):');
+  const price = priceRaw && Number.isFinite(Number(priceRaw)) ? Number(priceRaw) : null;
+  const discRaw = prompt('Discount (optional):');
+  const discount = discRaw && Number.isFinite(Number(discRaw)) ? Number(discRaw) : null;
   try {
     const who = await ensureDisplayName();
     const { error } = await sb.from('nav_so_export_history').upsert(
-      { order_number, sku, location_code, qty, customer, order_date, exported_by: who },
+      { order_number, sku, location_code, qty, customer, order_date, price, discount, exported_by: who },
       { onConflict: 'order_number,sku,location_code' }
     );
     if (error) throw error;
@@ -1532,10 +1558,12 @@ $('historyExportBtn') && $('historyExportBtn').addEventListener('click', () => {
     'SKU': r.sku,
     'Location': r.location_code,
     'Qty': r.qty,
+    'Price': r.price != null ? Number(r.price) : '',
+    'Discount': r.discount != null ? Number(r.discount) : '',
     'Exported At': r.exported_at ? new Date(r.exported_at).toLocaleString() : '',
     'Exported By': r.exported_by || '',
   }));
-  const ws = XLSX.utils.json_to_sheet(outRows, { header: ['Order','Order Date','Customer','SKU','Location','Qty','Exported At','Exported By'] });
+  const ws = XLSX.utils.json_to_sheet(outRows, { header: ['Order','Order Date','Customer','SKU','Location','Qty','Price','Discount','Exported At','Exported By'] });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Nav SO History');
   XLSX.writeFile(wb, `nav-so-history-${stamp()}.xlsx`);
@@ -4050,10 +4078,15 @@ function buildNavSORows(){
           rem[code] = avail - take;
           needed -= take;
           allocated += take;
-          // History log — one row per order+sku+location combination allocated
-          // in this export (independent of the Type/price bucket key above).
-          const hKey = `${orderNum}|${localSku}|${code}`;
-          historyBuckets.set(hKey, (historyBuckets.get(hKey) || 0) + take);
+          // History log — one row per order+sku+location+price combination
+          // allocated in this export (independent of the Type/price bucket
+          // key above). Price/discount are part of the key, same rule as the
+          // main buckets, so two line items on the same order+sku+location at
+          // different prices don't collapse into one averaged row.
+          const hKey = `${orderNum}|${localSku}|${code}|${price}|${disc}`;
+          const hEntry = historyBuckets.get(hKey) || { qty: 0, price, discount: disc };
+          hEntry.qty += take;
+          historyBuckets.set(hKey, hEntry);
           if (!orderMeta.has(orderNum)){
             orderMeta.set(orderNum, { date: o.created_at || '', customer: customerOf(o) });
           }
@@ -4063,10 +4096,10 @@ function buildNavSORows(){
       trackUnfulfilled(localSku, ecom, originalNeeded, allocated);
     }
   }
-  const historyRows = [...historyBuckets.entries()].map(([key, qty]) => {
+  const historyRows = [...historyBuckets.entries()].map(([key, entry]) => {
     const [orderNumber, sku, location] = key.split('|');
     const meta = orderMeta.get(orderNumber) || {};
-    return { orderNumber, orderDate: meta.date || '', customer: meta.customer || '', sku, location, qty };
+    return { orderNumber, orderDate: meta.date || '', customer: meta.customer || '', sku, location, qty: entry.qty, price: entry.price, discount: entry.discount };
   });
 
   // Sort: Location Code ASC, then SKU ASC, then net unit price ASC

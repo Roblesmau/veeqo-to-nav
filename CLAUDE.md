@@ -136,6 +136,6 @@ Things to re-check after touching the orders pipeline:
 - `proxy.js` — local dev proxy (Node, port 8787, honors `PORT`).
 - `vercel.json` — clean URLs + root redirect.
 - `SUPABASE_SETUP.md` — one-time DB + Storage + policies setup.
-- History tab logs every "Export to Nav SO" to Supabase `nav_so_export_history` (unique on `order_number, sku, location_code`). `buildNavSORows()` returns `historyRows`; `pushExportHistory()` runs post-export and skips orders already in `HISTORY_ORDER_NUMS`.
+- History tab logs every "Export to Nav SO" to Supabase `nav_so_export_history` (unique on `order_number, sku, location_code`). `buildNavSORows()` returns `historyRows`; `pushExportHistory()` runs post-export and skips orders already in `HISTORY_ORDER_NUMS`. Includes nullable `price`/`discount` columns — the history bucket key adds price+discount (mirroring the main export's bucket-key rule) so two line items on the same order+sku+location at different prices log as separate rows instead of colliding.
 - `DEPLOY.md` — Vercel deploy walkthrough for non-technical users.
 - `favicon.svg` — VN wordmark, blue→green gradient.
